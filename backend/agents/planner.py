@@ -56,11 +56,11 @@ class _RawPlannerOutput(BaseModel):
 
     reasoning: str = Field(
         ...,
-        description="Brief kinematic reasoning explaining approach angle, offsets, and fault compensation.",
+        description="Brief kinematic reasoning explaining approach angle, offsets, and task strategy.",
     )
     waypoints: list[PlannerWaypoint] = Field(
         ...,
-        description="Exactly 4 waypoints in order: pre_grasp, grasp, close, lift.",
+        description="4 to 7 sequential waypoints accomplishing the full task (label each phase as one of: pre_grasp, grasp, close, lift).",
     )
 
 
@@ -73,25 +73,35 @@ class PlannerOutput(BaseModel):
 
 PLANNER_SYSTEM_PROMPT = """You are an expert robotic manipulation motion planner controlling simulated MuJoCo robots.
 
-Your job is to output EXACTLY 4 object-centric waypoints in order:
-1. `pre_grasp`: hover above or near the object with gripper/fingers OPEN (`gripper_target: 0.0`).
-2. `grasp`: move end-effector/palm to the grasp pose around the object (`gripper_target: 0.0`).
-3. `close`: hold the grasp pose while closing gripper/fingers (`gripper_target: 1.0`).
-4. `lift`: lift the grasped object vertically (`position_offset[2] >= 0.16`, `gripper_target: 1.0`).
+Your job is to output a sequence of **4 to 7** object-centric waypoints (labeling each `phase` as one of `pre_grasp`, `grasp`, `close`, or `lift`) that cleanly accomplish the requested TASK!
+
+TASK-SPECIFIC MOTION PATTERNS:
+- **Pick & Lift / Obstacle Grasp** (4 waypoints):
+  1. `pre_grasp`: hover above or in front of the object (`gripper_target: 0.0`).
+  2. `grasp`: move to object center (`gripper_target: 0.0`).
+  3. `close`: hold pose while closing gripper (`gripper_target: 1.0`).
+  4. `lift`: lift vertically (`position_offset[2] >= 0.16`, `gripper_target: 1.0`).
+- **Press Button (`press_button`)** (4 waypoints):
+  - Close the gripper (`gripper_target: 1.0`) to form a rigid finger probe, hover above the specific target button (`button1`/`button2`/`button3` coordinates from the scene geometry!), press STRAIGHT DOWN onto the button (`dz` down into the button travel), and **HOLD IT PRESSED on the final waypoint** (do NOT lift back up — the simulator checks if the button is depressed at the end!).
+- **Open Drawer (`open_drawer`)** (4–5 waypoints):
+  - Approach the drawer handle (`gripper_target: 0.0`), move onto handle, close firmly (`gripper_target: 1.0`), then **pull straight back along the drawer's slide axis (`-X`)** at handle height (do NOT lift vertically!).
+- **Turn Valve / Dial / Lid (`turn_joint`)** (4–5 waypoints):
+  - Hover above knob/valve, descend onto it (`gripper_target: 0.0`), grip (`gripper_target: 1.0`), then **rotate `orientation_rpy[2]` (yaw)** by the target angle while holding position!
+- **Pick & Place / Insert Key (`place_on_pad`, `place_in_bin`, `insert_key`)** (6–7 waypoints):
+  - `pre_grasp` -> `grasp` -> `close` -> `lift` (carry above target pad/keyhole) -> move down to target pad/keyhole offset (relative to initial object center!) -> open gripper (`gripper_target: 0.0`) or push in!
 
 COORDINATE CONVENTIONS:
-- `position_offset = [dx, dy, dz]` is in METERS relative to the target object's initial center `(x, y, z)`.
+- `position_offset = [dx, dy, dz]` is ALWAYS in METERS relative to the target object's INITIAL center `(x, y, z)`.
+  - If a fixture (green pad, lock keyhole, button) is at world pos `(fx, fy, fz)` and initial object is at `(ox, oy, oz)`, the offset to reach the fixture is `[fx - ox, fy - oy, fz - oz]`!
   - `+z` is UP, `-z` is DOWN toward the table.
-  - For a standard top-down grasp, `pre_grasp` is typically `[0.0, 0.0, 0.14]`, `grasp` is `[0.0, 0.0, 0.0]`, `close` is `[0.0, 0.0, 0.0]`, and `lift` is `[0.0, 0.0, 0.18]`.
-- `orientation_rpy = [roll, pitch, yaw]` in RADIANS (intrinsic/extrinsic XYZ Euler).
+- `orientation_rpy = [roll, pitch, yaw]` in RADIANS (XYZ Euler).
   - For `franka_emika_panda`:
     - `[3.14159, 0.0, 1.5708]` points the parallel-jaw gripper straight DOWN (`-Z`).
-    - `[3.14159, -0.40, -1.20]` or `[3.14159, -0.40, 0.0]` tilts the gripper ~23° forward along `+X` to slide underneath an overhang shelf from the open `-X` front side (e.g. `pre_grasp` at `[-0.08, 0.0, 0.10]`, `grasp` at `[0.0, 0.0, 0.0]`, `close` at `[0.0, 0.0, 0.0]`, `lift` pulling back & up to `[-0.15, 0.0, 0.16]`).
-    - IMPORTANT: Keep Panda `pitch` in `[-0.50, +0.40]` — pitching steeper than `-0.55` drives the wrist/hand into the tabletop! Always keep `grasp` `dz >= 0.0`.
-    - Adjusting `yaw` rotates the parallel gripper jaws around Z to align with box edges (avoid clamping across wide box diagonals!).
-  - For `wonik_allegro`: `[0.0, 1.5708, 0.0]` points the palm downward/forward over the object. Use `finger_targets` (`{"thumb": ..., "index": ..., "middle": ..., "ring": ...}`) to adapt around disabled fingers!
-- Avoid colliding with the table (`table_top_z`). Keep `grasp` `dz` safely above the table surface.
-- When given prior attempt feedback from the Visual Critic, apply the suggested spatial corrections directly to fix the physical failure mode."""
+    - `[3.14159, -0.40, -1.20]` or `[3.14159, -0.40, 0.0]` tilts the gripper ~23° forward along `+X` to slide underneath an overhang shelf from the open `-X` front side.
+    - IMPORTANT: Keep Panda `pitch` in `[-0.50, +0.40]` — pitching steeper than `-0.55` drives the wrist/hand into the tabletop!
+    - Adjusting `yaw` rotates the parallel gripper jaws around Z to align with box edges, handles, or keyholes.
+  - For `wonik_allegro`: `[0.0, 1.5708, 0.0]` points the palm downward/forward over the object.
+- When given prior attempt feedback from the Visual Critic, apply the suggested spatial/speed corrections directly."""
 
 
 IN_HAND_ROTATION_SYSTEM_PROMPT = """You are an expert dexterous manipulation planner controlling a palm-up 4-fingered Wonik Allegro right hand in MuJoCo.
@@ -190,9 +200,10 @@ def plan_waypoints(
         raw = _RawPlannerOutput.model_validate_json(response.text)
 
     phases = ["pre_grasp", "grasp", "close", "lift"]
+    max_wps = 4 if task_type in ("in_hand_rotation", "in_hand_spindle") else 7
     converted: list[Waypoint] = []
-    for idx, pwp in enumerate(raw.waypoints[:4]):
-        phase = pwp.phase if pwp.phase in phases else phases[idx]
+    for idx, pwp in enumerate(raw.waypoints[:max_wps]):
+        phase = pwp.phase if pwp.phase in phases else phases[min(idx, 3)]
         pos = (list(pwp.position_offset) + [0.0, 0.0, 0.0])[:3]
         rpy = (list(pwp.orientation_rpy) + [3.14159, 0.0, 1.5708])[:3]
         ft = pwp.finger_targets.model_dump() if pwp.finger_targets is not None else None

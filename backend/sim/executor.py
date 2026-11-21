@@ -377,6 +377,7 @@ def _execute_in_hand_rotation(
                 fps=fps,
                 codec="libx264",
                 pixelformat="yuv420p",
+                output_params=["-profile:v", "baseline", "-level", "3.0", "-movflags", "+faststart"],
             )
     finally:
         if renderer is not None:
@@ -644,6 +645,7 @@ def execute_rollout(
                 fps=fps,
                 codec="libx264",
                 pixelformat="yuv420p",
+                output_params=["-profile:v", "baseline", "-level", "3.0", "-movflags", "+faststart"],
             )
     finally:
         if renderer is not None:
