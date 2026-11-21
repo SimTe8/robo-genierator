@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MENAGERIE_DIR = REPO_ROOT / "assets" / "mujoco_menagerie"
 
 RobotId = Literal["franka_emika_panda", "wonik_allegro"]
+TaskType = Literal["pick_and_lift", "in_hand_rotation"]
 ObjectShape = Literal["box", "cylinder", "sphere"]
 
 
@@ -43,6 +44,7 @@ class SceneBundle:
     scene_seed: int
     obj_spec: ObjectSpec
     table_top_z: float
+    task_type: TaskType = "pick_and_lift"
     disabled_joints: list[str] = field(default_factory=list)
 
 
@@ -213,11 +215,115 @@ def build_scene(
     robot_id: RobotId = "franka_emika_panda",
     scene_seed: int = 42,
     disabled_joints: list[str] | None = None,
+    task_type: TaskType = "pick_and_lift",
 ) -> SceneBundle:
     """Build a MuJoCo model & data with the requested robot and seeded object."""
     disabled_joints = list(disabled_joints or [])
 
-    if robot_id == "franka_emika_panda":
+    if task_type == "in_hand_rotation":
+        robot_id = "wonik_allegro"
+        scene_xml = MENAGERIE_DIR / "wonik_allegro" / "scene_right.xml"
+        spec = mujoco.MjSpec.from_file(str(scene_xml))
+
+        default_obj = spec.body("object")
+        if default_obj is not None:
+            spec.delete(default_obj)
+
+        rng = np.random.default_rng(scene_seed)
+        half_ext = float(rng.uniform(0.028, 0.034))
+        yaw = float(rng.uniform(-0.35, 0.35))
+        obj_spec = ObjectSpec(
+            shape="box",
+            size=[half_ext, half_ext, half_ext],
+            pos=[0.055, 0.005, 0.058],
+            quat=_yaw_to_quat(yaw),
+            rgba=[0.18, 0.48, 0.90, 1.0],
+            mass=0.08,
+        )
+
+        # Spawn multi-face orientation cube in the palm so rotation is visually unmistakable
+        obj_body = spec.worldbody.add_body()
+        obj_body.name = "target_object"
+        obj_body.pos = obj_spec.pos
+        obj_body.quat = obj_spec.quat
+
+        free_jnt = obj_body.add_joint()
+        free_jnt.name = "target_object_freejoint"
+        free_jnt.type = mujoco.mjtJoint.mjJNT_FREE
+
+        cube_geom = obj_body.add_geom()
+        cube_geom.name = "target_object_geom"
+        cube_geom.type = mujoco.mjtGeom.mjGEOM_BOX
+        cube_geom.size = obj_spec.size
+        cube_geom.rgba = obj_spec.rgba
+        cube_geom.mass = obj_spec.mass
+        cube_geom.condim = 6
+        cube_geom.friction = [0.9, 0.005, 0.001]
+
+        # Bright red marker on +X face & yellow marker on +Y face for clear visual tracking
+        marker_x = obj_body.add_geom()
+        marker_x.name = "cube_marker_x"
+        marker_x.type = mujoco.mjtGeom.mjGEOM_BOX
+        marker_x.pos = [half_ext + 0.001, 0.0, 0.0]
+        marker_x.size = [0.0015, half_ext * 0.65, half_ext * 0.65]
+        marker_x.rgba = [0.95, 0.18, 0.15, 1.0]
+        marker_x.contype = 0
+        marker_x.conaffinity = 0
+        marker_x.mass = 0.0
+
+        marker_y = obj_body.add_geom()
+        marker_y.name = "cube_marker_y"
+        marker_y.type = mujoco.mjtGeom.mjGEOM_BOX
+        marker_y.pos = [0.0, half_ext + 0.001, 0.0]
+        marker_y.size = [half_ext * 0.65, 0.0015, half_ext * 0.65]
+        marker_y.rgba = [0.98, 0.82, 0.12, 1.0]
+        marker_y.contype = 0
+        marker_y.conaffinity = 0
+        marker_y.mass = 0.0
+
+        marker_top = obj_body.add_geom()
+        marker_top.name = "cube_marker_top_arrow"
+        marker_top.type = mujoco.mjtGeom.mjGEOM_BOX
+        marker_top.pos = [half_ext * 0.4, 0.0, half_ext + 0.001]
+        marker_top.size = [half_ext * 0.45, half_ext * 0.18, 0.0015]
+        marker_top.rgba = [0.95, 0.18, 0.15, 1.0]
+        marker_top.contype = 0
+        marker_top.conaffinity = 0
+        marker_top.mass = 0.0
+
+        # Close-up cameras focused on the palm and cube
+        side_cam = spec.worldbody.add_camera()
+        side_cam.name = "side_cam"
+        side_cam.pos = [0.22, -0.24, 0.16]
+        side_cam.quat = _lookat_quat(side_cam.pos, [0.05, 0.0, 0.05])
+        side_cam.fovy = 40.0
+
+        top_cam = spec.worldbody.add_camera()
+        top_cam.name = "top_cam"
+        top_cam.pos = [0.05, 0.0, 0.34]
+        top_cam.quat = _lookat_quat(top_cam.pos, [0.05, 0.0, 0.04], up=[1.0, 0.0, 0.0])
+        top_cam.fovy = 40.0
+
+        table_top_z = -0.10
+        model = spec.compile()
+        data = mujoco.MjData(model)
+
+        # Pre-cradle fingers slightly so the cube sits safely in the palm at t=0
+        cradle_ctrl = {
+            "ffa0": 0.0, "ffa1": 0.45, "ffa2": 0.55, "ffa3": 0.45,
+            "mfa0": 0.0, "mfa1": 0.45, "mfa2": 0.55, "mfa3": 0.45,
+            "rfa0": 0.0, "rfa1": 0.45, "rfa2": 0.55, "rfa3": 0.45,
+            "tha0": 1.15, "tha1": 0.35, "tha2": 0.45, "tha3": 0.45,
+        }
+        for aid in range(model.nu):
+            aname = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, aid) or ""
+            if aname in cradle_ctrl:
+                val = cradle_ctrl[aname]
+                data.ctrl[aid] = val
+                jid = model.actuator_trnid[aid, 0]
+                data.qpos[model.jnt_qposadr[jid]] = val
+
+    elif robot_id == "franka_emika_panda":
         scene_xml = MENAGERIE_DIR / "franka_emika_panda" / "scene.xml"
         spec = mujoco.MjSpec.from_file(str(scene_xml))
         table_top_z = 0.02
@@ -334,6 +440,7 @@ def build_scene(
         scene_seed=scene_seed,
         obj_spec=obj_spec,
         table_top_z=table_top_z,
+        task_type=task_type,
         disabled_joints=disabled_joints,
     )
 

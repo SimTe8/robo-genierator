@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 RobotId = Literal["franka_emika_panda", "wonik_allegro"]
+TaskType = Literal["pick_and_lift", "in_hand_rotation"]
 DecisionType = Literal["ACCEPT_TRAJECTORY", "REFINE_GRASP", "GIVE_UP"]
 
 
@@ -45,14 +46,19 @@ class RunRequest(BaseModel):
         default="Pick up the object and lift it 15 cm above the table.",
         min_length=1,
     )
+    task_type: TaskType = "pick_and_lift"
     robot_id: RobotId = "franka_emika_panda"
     scene_seed: int = 42
+    object_shape: Literal["auto", "box", "cylinder", "sphere"] = "auto"
     disabled_joints: list[str] = Field(
         default_factory=list,
         description="Joint or finger names to lock/disable via live fault injection.",
     )
-    max_attempts: int = Field(default=4, ge=1, le=8)
+    max_attempts: int = Field(default=4, ge=1, le=12)
+    target_rotation_deg: float = Field(default=60.0, ge=15.0, le=720.0)
     feedback_mode: Literal["one_shot", "text_only", "video"] = "video"
+    planner_model: str = "models/gemini-4-carbon"
+    critic_model: str = "models/gemini-4-neon"
 
 
 class IterationEvent(BaseModel):
@@ -67,3 +73,8 @@ class IterationEvent(BaseModel):
     decision: DecisionType
     reason: str
     latency_s: float
+    decision_confidence: float | None = None
+    decision_probabilities: dict[str, float] | None = None
+    failure_mode: str | None = None
+    grasp_score: int | None = None
+    trajectory_path: str | None = None
