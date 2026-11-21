@@ -1,0 +1,7 @@
+Source Repository: https://github.com/google-deepmind/mujoco_menagerie
+
+Model Licenses (from each model's own LICENSE file):
+- franka_emika_panda: Apache License, Version 2.0 (assets/mujoco_menagerie/franka_emika_panda/LICENSE)
+- wonik_allegro: BSD 2-Clause License — Copyright (c) 2016, SimLab (assets/mujoco_menagerie/wonik_allegro/LICENSE)
+- robotiq_2f85: BSD 2-Clause License — Copyright (c) 2013, ROS-Industrial (assets/mujoco_menagerie/robotiq_2f85/LICENSE)
+- universal_robots_ur5e: BSD 3-Clause License — Copyright 2018 ROS Industrial Consortium (assets/mujoco_menagerie/universal_robots_ur5e/LICENSE)
