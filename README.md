@@ -42,6 +42,29 @@ npm install
 npm run dev
 ```
 
+## Useful Commands
+
+### Visualize Robots & Seeded Objects (MuJoCo)
+```bash
+# Render side+top composite PNG and MP4 previews for both robots (headless EGL)
+python backend/sim/visualize.py --robot all --seed 42
+
+# Render a single robot with a different procedural seed
+python backend/sim/visualize.py --robot franka_emika_panda --seed 7
+
+# Launch interactive MuJoCo 3D viewer (requires display / WSLg)
+python backend/sim/visualize.py --robot franka_emika_panda --seed 42 --mode viewer
+```
+
+### Run Baseline IK Grasp & Lift Rollout (Phase 2 Milestone)
+```bash
+# Execute a healthy Panda grasp & lift with slow-motion video and simulator verification
+python backend/sim/test_grasp.py --robot franka_emika_panda --seed 42
+
+# Test live fault injection (e.g., lock joint4)
+python backend/sim/test_grasp.py --robot franka_emika_panda --seed 42 --disable joint4
+```
+
 ## Asset Attribution & Licenses
 
 All robot MJCF models and meshes are from [`google-deepmind/mujoco_menagerie`](https://github.com/google-deepmind/mujoco_menagerie). Each model carries its own license in its folder:

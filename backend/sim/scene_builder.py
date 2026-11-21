@@ -310,10 +310,16 @@ def build_scene(
     else:
         raise ValueError(f"Unsupported robot_id: {robot_id}")
 
-    # Apply live fault injection if requested: zero out actuator gain for disabled joints
+    # Apply live fault injection if requested: lock disabled joints at their initial pose
+    mujoco.mj_forward(model, data)
     for jname in disabled_joints:
         jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, jname)
         if jid >= 0:
+            qadr = model.jnt_qposadr[jid]
+            q0 = float(data.qpos[qadr])
+            model.jnt_limited[jid] = 1
+            model.jnt_range[jid, 0] = q0 - 1e-4
+            model.jnt_range[jid, 1] = q0 + 1e-4
             for aid in range(model.nu):
                 if model.actuator_trnid[aid, 0] == jid:
                     model.actuator_gainprm[aid, :] = 0.0
