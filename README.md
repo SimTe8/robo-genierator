@@ -79,17 +79,20 @@ python backend/agents/run_loop.py --robot franka_emika_panda --seed 42 --disable
 python backend/agents/run_loop.py --robot franka_emika_panda --seed 42 --mode text_only
 python backend/agents/run_loop.py --robot franka_emika_panda --seed 42 --mode one_shot
 
-# Dexterous In-Hand Cube Rotation on Wonik Allegro (16-DOF palm-up hand)
-python backend/agents/run_loop.py --task-type in_hand_rotation --seed 42 --target-rotation 60 \
-  --planner models/gemini-4-carbon --critic models/gemini-4-neon --mode video --max-attempts 4
+# Obstacle-Guarded Panda Grasp (overhang shelf forces visual self-correction) + 20-episode DR multiplier
+python backend/agents/run_loop.py --task-type obstacle_grasp --seed 42 \
+  --planner models/gemini-4-neon --critic models/gemini-4-hydrogen --mode video --max-attempts 4 --dr-episodes 20
 
-# Full 360-degree cyclic in-hand cube rotation stress test
-python backend/agents/run_loop.py --task-type in_hand_rotation --seed 42 --target-rotation 360 \
-  --planner models/gemini-4-carbon --critic models/gemini-4-hydrogen --mode video --max-attempts 6
+# Dexterous In-Hand Cube Spinner on Wonik Allegro (180-deg spindle dial)
+python backend/agents/run_loop.py --task-type in_hand_spindle --seed 42 --target-rotation 180 \
+  --planner models/gemini-4-neon --critic models/gemini-4-hydrogen --mode video --max-attempts 4
 
-# In-Hand Cube Rotation with a disabled middle finger
-python backend/agents/run_loop.py --task-type in_hand_rotation --seed 42 --disable mfj1 mfj2 \
-  --planner models/gemini-4-carbon --critic models/gemini-4-neon --mode video --max-attempts 4
+# Free-Cube In-Hand Reorientation (45-deg sweet spot)
+python backend/agents/run_loop.py --task-type in_hand_rotation --seed 42 --target-rotation 45 \
+  --planner models/gemini-4-neon --critic models/gemini-4-hydrogen --mode video --max-attempts 4
+
+# Start FastAPI + SSE Backend Server (for React Frontend)
+MUJOCO_GL=egl uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ## Asset Attribution & Licenses

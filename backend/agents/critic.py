@@ -15,15 +15,19 @@ from schemas import DecisionType, Waypoint
 
 
 class VisualCritique(BaseModel):
-    """Constructive physical diagnosis and parameter adjustment advice from the Critic."""
+    """Constructive physical diagnosis and actionable parameter/speed advice from the Critic."""
 
     diagnosis: str = Field(
         ...,
-        description="Concrete description of what physically happened in the rollout (e.g., gripper stopped 5cm short, fingers grazed left edge, object slipped on lift).",
+        description="Rich physical description of what went wrong in the video (e.g., movement too abrupt/fast, specific finger pushing too strongly or acting as a brake, direction of cube drift, slip, or collision).",
+    )
+    motion_qualitative_feedback: str = Field(
+        ...,
+        description="Qualitative coaching on timing, speed, force balance, and finger/arm coordination (e.g., 'Step 2 is too fast and flings the cube toward the wrist; slow down duration_s and soften index finger curl').",
     )
     suggested_adjustments: str = Field(
         ...,
-        description="Specific actionable changes for the Planner (e.g., shift dx +0.02m, lower dz -0.015m, tilt pitch +0.3 rad to compensate for locked joint4, or increase gripper_target).",
+        description="Concrete parameter adjustments matching the active task schema.",
     )
 
 
@@ -87,7 +91,7 @@ def evaluate_rollout(
         else "Prefer REFINE_GRASP over GIVE_UP if an offset, orientation tilt, or finger adjustment could still succeed."
     )
 
-    if task_type == "in_hand_rotation":
+    if task_type in ("in_hand_rotation", "in_hand_spindle"):
         verdict_instructions = (
             f"Judge whether the Allegro hand rotated the multi-colored cube in-hand by at least {target_rotation_deg:.0f} degrees "
             "(visible via the red/yellow face markers spinning and the YAW overlay) WITHOUT dropping the cube off the palm. "
@@ -107,16 +111,17 @@ def evaluate_rollout(
     else:
         verdict_instructions = (
             "Judge whether the robot successfully grasped and stably lifted the target object "
-            "above the table without dropping it or crashing into the table. "
+            "above the table without dropping it, crashing into the table, or hitting any red obstacle/overhang shelf. "
             f"{give_up_note}"
         )
         verdict_criteria = {
-            "ACCEPT_TRAJECTORY": "The robot cleanly grasped the object, lifted it noticeably (>= 8 cm) above the table, and held it stably without dropping or colliding harshly with the table.",
-            "REFINE_GRASP": "The attempt failed (missed, grazed, slipped, dropped, stopped short, or hit the table), but adjusting waypoints/orientation/gripper could fix it.",
-            "GIVE_UP": "The task appears physically unreachable/impossible under the current joint faults, or attempts are exhausted.",
+            "ACCEPT_TRAJECTORY": "The robot cleanly grasped the object, lifted it noticeably (>= 8 cm) above the table, and held it stably without dropping or colliding with the table or any obstacle shelf.",
+            "REFINE_GRASP": "The attempt failed (hit an obstacle/shelf, missed, grazed, slipped, dropped, stopped short, or hit the table), but adjusting waypoints/approach direction/tilt/gripper could fix it.",
+            "GIVE_UP": "The task appears physically unreachable/impossible under the current faults/obstacles, or attempts are exhausted.",
         }
         failure_criteria = {
-            "NONE_SUCCESS": "Clean grasp and stable lift succeeded.",
+            "NONE_SUCCESS": "Clean grasp and stable lift succeeded with no obstacle collision.",
+            "OBSTACLE_COLLISION": "Robot arm or gripper collided with a red shelf/overhang/barrier obstacle.",
             "STOPPED_SHORT_UNREACHABLE": "End-effector could not reach the object (e.g., due to a locked joint or too-high z offset).",
             "MISSED_LATERAL": "Gripper/fingers closed beside the object (x/y offset error).",
             "TABLE_COLLISION": "Robot collided with or pressed heavily into the tabletop.",
@@ -182,16 +187,35 @@ def evaluate_rollout(
     # --- STEP 4b: Constructive Visual/Text Diagnosis for Planner Refinement ---
     if on_status is not None:
         on_status(f"Generating visual critique ({critic_model})")
+
+    if task_type in ("in_hand_rotation", "in_hand_spindle"):
+        schema_guide = (
+            "IMPORTANT — ALLEGRO IN-HAND ROTATION CONTROL SCHEMA (palm is FIXED palm-up; do NOT suggest palm dx/dy/dz or palm tilt!):\n"
+            "- `finger_targets` (`thumb`, `index`, `middle`, `ring` in `[0.0, 1.0]`): finger curl/force (`0.0`=open, `0.45`=cradle, `0.85`=strong push).\n"
+            "- `orientation_rpy = [index_sweep, middle_sweep, ring_sweep]` in `[-0.47, +0.47]` rad: lateral side-to-side abduction sweep of each finger.\n"
+            "- `position_offset = [thumb_opp (0.26..1.40), thumb_sweep (-0.10..1.16), 0.0]`: thumb opposition & lateral sweep angles.\n"
+            "- `duration_s` in `[0.25, 1.5]` sec: motion speed per gait step (increase to slow down abrupt/flinging motions; decrease for brisk resets).\n\n"
+            "Describe qualitatively WHY the rotation failed or drifted (e.g., which specific finger moved too strongly, acted as a brake during reset, "
+            "or pushed the cube off the wrist/thumb edge; whether the motion was too fast/abrupt; whether the cube rocked back and forth instead of ratcheting). "
+            "Then give concrete adjustments to `finger_targets`, finger sweeps (`orientation_rpy`), thumb angles (`position_offset[0..1]`), and `duration_s`."
+        )
+    else:
+        schema_guide = (
+            "Explain concisely WHY the grasp failed physically (citing exact visual evidence from side_cam/top_cam: "
+            "if a red overhang shelf/obstacle blocked the arm, explicitly state WHICH direction is blocked—e.g. directly above and behind/+X—and "
+            "WHICH side is open—e.g. approach from -X front/side low underneath the shelf, pull out along -X before lifting! "
+            "Also note alignment, finger gap, joint reachability, speed/force, or slip direction). "
+            "Give concrete numeric adjustments (dx, dy, dz in meters; roll/pitch/yaw in radians; gripper_target; duration_s) "
+            "for each of the 4 waypoints (`pre_grasp`, `grasp`, `close`, `lift`) so the Planner avoids the obstacle/fault and succeeds."
+        )
+
     critique_prompt = (
         f"{context_text}\n\n"
         f"The Decisions API classified this rollout as:\n"
         f"- verdict: {decision} (confidence={confidence:.2f}, probs={probabilities})\n"
         f"- failure_mode: {failure_mode}\n"
         f"- grasp_quality: {grasp_score}/3\n\n"
-        "Explain concisely WHY the grasp failed physically (citing exact visual evidence if video is provided, "
-        "such as side_cam/top_cam alignment, finger gap, joint reachability, or slip direction) and give "
-        "concrete numeric adjustments (dx, dy, dz in meters; roll/pitch/yaw in radians; gripper_target) "
-        "so the Planner can succeed on the next attempt."
+        f"{schema_guide}"
     )
 
     gen_contents: list = []
@@ -219,7 +243,11 @@ def evaluate_rollout(
     else:
         crit = VisualCritique.model_validate_json(crit_resp.text)
 
-    reason = f"[{failure_mode} | score={grasp_score}/3 | conf={confidence:.2f}] {crit.diagnosis} -> Fix: {crit.suggested_adjustments}"
+    reason = (
+        f"[{failure_mode} | score={grasp_score}/3 | conf={confidence:.2f}] "
+        f"{crit.diagnosis} | Coaching: {crit.motion_qualitative_feedback} "
+        f"-> Fix: {crit.suggested_adjustments}"
+    )
 
     return CriticEvaluation(
         decision=decision,

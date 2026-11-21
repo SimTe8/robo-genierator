@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 RobotId = Literal["franka_emika_panda", "wonik_allegro"]
-TaskType = Literal["pick_and_lift", "in_hand_rotation"]
+TaskType = Literal["pick_and_lift", "obstacle_grasp", "in_hand_rotation", "in_hand_spindle"]
 DecisionType = Literal["ACCEPT_TRAJECTORY", "REFINE_GRASP", "GIVE_UP"]
 
 
@@ -33,6 +33,12 @@ class Waypoint(BaseModel):
         le=1.0,
         description="Normalized gripper/finger closure (0.0 = open, 1.0 = closed).",
     )
+    duration_s: float = Field(
+        default=0.6,
+        ge=0.2,
+        le=2.0,
+        description="Duration of this waypoint/gait step in seconds (larger = slower, gentler motion).",
+    )
     finger_targets: dict[str, float] | None = Field(
         default=None,
         description="Optional per-finger closure overrides for multi-fingered hands.",
@@ -56,6 +62,12 @@ class RunRequest(BaseModel):
     )
     max_attempts: int = Field(default=4, ge=1, le=12)
     target_rotation_deg: float = Field(default=60.0, ge=15.0, le=720.0)
+    chunk_step_deg: float | None = Field(
+        default=None,
+        ge=30.0,
+        le=180.0,
+        description="Optional receding-horizon checkpoint milestone in degrees (e.g. 90 for 360 deg).",
+    )
     feedback_mode: Literal["one_shot", "text_only", "video"] = "video"
     planner_model: str = "models/gemini-4-carbon"
     critic_model: str = "models/gemini-4-neon"
@@ -65,6 +77,7 @@ class IterationEvent(BaseModel):
     """Shared backend <-> frontend event emitted after each closed-loop attempt."""
 
     attempt_id: int
+    chunk_id: int | None = None
     model_used: str
     waypoints: list[Waypoint]
     video_url: str
