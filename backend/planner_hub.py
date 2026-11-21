@@ -253,6 +253,12 @@ def _build_run_loop_command(brief: PlannerBrief, script_path: Path) -> tuple[lis
         "--task",
         brief.prompt,
     ]
+    if s.task_type_override == "auto":
+        import json as _json
+
+        cmd.extend(["--library-object", brief.object.id, "--library-task", brief.task.id])
+        if brief.task_params:
+            cmd.extend(["--library-params-json", _json.dumps(brief.task_params)])
     if s.chunk_step_deg is not None and task_type in ("in_hand_rotation", "in_hand_spindle"):
         cmd.extend(["--chunk-deg", f"{s.chunk_step_deg:g}"])
     if s.dr_episodes > 0:

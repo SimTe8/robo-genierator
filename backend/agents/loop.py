@@ -280,15 +280,36 @@ def run_closed_loop(
     videos_dir.mkdir(parents=True, exist_ok=True)
     traj_dir.mkdir(parents=True, exist_ok=True)
 
-    # Probe scene once to get kinematic summary for the Planner
-    init_bundle = build_scene(
-        robot_id=request.robot_id,
-        scene_seed=request.scene_seed,
-        disabled_joints=request.disabled_joints,
-        task_type=request.task_type,
-        object_shape=request.object_shape,
-    )
+    def _make_bundle():
+        if request.library_object_id and request.library_task_id:
+            from library.scene import build_task_scene
+
+            return build_task_scene(
+                request.library_object_id,
+                request.library_task_id,
+                request.library_task_params,
+                robot_id=request.robot_id,
+                disabled_joints=request.disabled_joints,
+            )
+        return build_scene(
+            robot_id=request.robot_id,
+            scene_seed=request.scene_seed,
+            disabled_joints=request.disabled_joints,
+            task_type=request.task_type,
+            object_shape=request.object_shape,
+        )
+
+    # Probe scene once to get kinematic summary (+ library scene/fixture geometry if applicable)
+    init_bundle = _make_bundle()
     kinematic_summary = summarize_kinematics(init_bundle)
+    if request.library_object_id and request.library_task_id:
+        import json as _json
+        from library.scene import describe as describe_lib_scene
+
+        kinematic_summary += (
+            "\n\nLIBRARY TASK SCENE GEOMETRY (object, fixtures, target pads, articulated joints):\n"
+            + _json.dumps(describe_lib_scene(init_bundle), indent=2)
+        )
 
     if request.task_type in ("in_hand_rotation", "in_hand_spindle") and request.chunk_step_deg is not None:
         return _run_checkpointed_rotation(
@@ -327,13 +348,7 @@ def run_closed_loop(
 
         # 2. Execute & Render (MuJoCo EGL) on a fresh scene instance
         _status(f"{prefix} | Simulating & rendering MuJoCo rollout")
-        bundle = build_scene(
-            robot_id=request.robot_id,
-            scene_seed=request.scene_seed,
-            disabled_joints=request.disabled_joints,
-            task_type=request.task_type,
-            object_shape=request.object_shape,
-        )
+        bundle = _make_bundle()
         video_path = videos_dir / f"attempt_{attempt_id}.mp4"
         render_video = request.feedback_mode in ("video", "one_shot") or True
         rollout = execute_rollout(

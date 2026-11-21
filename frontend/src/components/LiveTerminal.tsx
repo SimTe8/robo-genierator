@@ -40,10 +40,13 @@ function formatElapsed(seconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
+
 export function LiveTerminal({
   jobId,
   lines,
   live,
+  activeStage,
   exitCode,
   onStop,
   onClose,
@@ -51,6 +54,7 @@ export function LiveTerminal({
   jobId: string;
   lines: TerminalLine[];
   live: boolean;
+  activeStage?: string | null;
   exitCode?: number | null;
   onStop?: () => void;
   onClose?: () => void;
@@ -59,6 +63,8 @@ export function LiveTerminal({
   const [copied, setCopied] = useState(false);
   const [pinned, setPinned] = useState(true);
   const [elapsed, setElapsed] = useState(0);
+  const [spinIdx, setSpinIdx] = useState(0);
+  const [stageElapsed, setStageElapsed] = useState(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -66,6 +72,19 @@ export function LiveTerminal({
     const id = window.setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => window.clearInterval(id);
   }, [live]);
+
+  useEffect(() => {
+    if (!live) return;
+    const id = window.setInterval(() => {
+      setSpinIdx((i) => (i + 1) % SPINNER_FRAMES.length);
+      setStageElapsed((s) => +(s + 0.12).toFixed(1));
+    }, 120);
+    return () => window.clearInterval(id);
+  }, [live]);
+
+  useEffect(() => {
+    setStageElapsed(0);
+  }, [activeStage]);
 
   useEffect(() => {
     if (!pinned || !scrollRef.current) return;
@@ -200,8 +219,14 @@ export function LiveTerminal({
             ))
           )}
           {live && (
-            <div className="mt-1 inline-flex items-center gap-1.5 text-gemini-sky">
-              <span className="inline-block h-3.5 w-2 animate-pulse bg-gemini-sky/80" />
+            <div className="mt-1.5 flex items-center gap-2 font-mono text-gemini-sky">
+              <span className="inline-block w-3 text-center text-sm leading-none">
+                {SPINNER_FRAMES[spinIdx]}
+              </span>
+              <span className="truncate">
+                {(activeStage ?? 'Working…').replace(/^…\s*/, '').replace(/\.\.\.$/, '')}…
+              </span>
+              <span className="shrink-0 text-faint">({stageElapsed.toFixed(1)}s)</span>
             </div>
           )}
         </div>

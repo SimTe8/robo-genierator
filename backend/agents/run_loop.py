@@ -102,6 +102,9 @@ def main() -> None:
         choices=["auto", "box", "cylinder", "sphere"],
         default="auto",
     )
+    parser.add_argument("--library-object", type=str, default=None, help="Object ID from backend/library/objects.py (e.g. mug, drawer, valve, button_panel, key).")
+    parser.add_argument("--library-task", type=str, default=None, help="Task ID from backend/library/tasks.py (e.g. place_on_pad, open_drawer, turn_joint, press_button, unlock_with_key).")
+    parser.add_argument("--library-params-json", type=str, default="{}", help="Optional JSON dict of task params.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--task", type=str, default=None)
     parser.add_argument("--disable", nargs="*", default=[], help="Joints to lock via fault injection.")
@@ -129,7 +132,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.task_type in ("in_hand_rotation", "in_hand_spindle"):
+    import json as _json
+
+    lib_params = _json.loads(args.library_params_json) if args.library_params_json else {}
+    if args.library_object and args.library_task:
+        from library.catalog import render_prompt
+        default_prompt = render_prompt(args.library_object, args.library_task, lib_params)
+        robot_id = args.robot
+    elif args.task_type in ("in_hand_rotation", "in_hand_spindle"):
         default_prompt = (
             f"Rotate the multi-colored cube in-hand by at least {args.target_rotation:.0f} degrees "
             "without dropping it."
@@ -150,6 +160,9 @@ def main() -> None:
         robot_id=robot_id,
         scene_seed=args.seed,
         object_shape=args.object_shape,
+        library_object_id=args.library_object,
+        library_task_id=args.library_task,
+        library_task_params=lib_params,
         disabled_joints=args.disable,
         max_attempts=args.max_attempts,
         target_rotation_deg=args.target_rotation,

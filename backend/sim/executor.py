@@ -485,6 +485,10 @@ def execute_rollout(
     for _ in range(100):
         mujoco.mj_step(m, d)
 
+    if "task" in bundle.extras and "object_id" in bundle.extras:
+        from sim.check import snapshot as snap_library_task
+        bundle.extras["_before_snapshot"] = snap_library_task(bundle)
+
     obj_body_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "target_object")
     obj_geom_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "target_object_geom")
     table_geom_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "table_top")
@@ -654,6 +658,44 @@ def execute_rollout(
     severe_obstacle_collision = obstacle_collision_steps > 25
 
     # Ground-truth success criterion (judged strictly by the simulator)
+    # If this bundle was built from library.scene.build_task_scene(), use sim.check.evaluate()!
+    if "task" in bundle.extras and "object_id" in bundle.extras:
+        from sim.check import evaluate as eval_library_task, snapshot as snap_library_task
+
+        if "_before_snapshot" in bundle.extras:
+            chk = eval_library_task(
+                bundle,
+                bundle.extras["_before_snapshot"],
+                metrics={"max_lift_cm": round(max_lift * 100.0, 2)},
+            )
+            sim_success = bool(chk.success)
+            checks_str = ", ".join(f"{k}={v}" for k, v in chk.checks.items())
+            metrics_str = ", ".join(f"{k}={v:.2f}" for k, v in chk.metrics.items())
+            telemetry_summary = (
+                f"sim_success={sim_success} | checks=({checks_str}) | "
+                f"metrics=({metrics_str}) | ee_min_dist={ee_min_dist * 100:.1f}cm | "
+                f"obj_contacts={obj_contact_steps}"
+            )
+            metrics = {
+                "sim_success": sim_success,
+                **chk.metrics,
+                "ee_min_dist_cm": round(ee_min_dist * 100.0, 2),
+                "obj_contact_steps": obj_contact_steps,
+                "video_frames": len(frames),
+            }
+            trajectory = {
+                "observation_qpos": np.asarray(obs_qpos, dtype=np.float32),
+                "privileged_obj_pos": np.asarray(priv_obj_pos, dtype=np.float32),
+                "action_ctrl": np.asarray(actions_ctrl, dtype=np.float32),
+            }
+            return RolloutResult(
+                sim_success=sim_success,
+                telemetry_summary=telemetry_summary,
+                video_path=video_path if (render_video and video_path is not None) else None,
+                metrics=metrics,
+                trajectory=trajectory,
+            )
+
     sim_success = bool(
         (final_lift >= lift_threshold)
         and (held_seconds >= 0.30)

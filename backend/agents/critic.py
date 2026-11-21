@@ -110,14 +110,14 @@ def evaluate_rollout(
         }
     else:
         verdict_instructions = (
-            "Judge whether the robot successfully grasped and stably lifted the target object "
-            "above the table without dropping it, crashing into the table, or hitting any red obstacle/overhang shelf. "
+            f"Judge whether the robot successfully completed the manipulation task ('{task_prompt}') "
+            "cleanly without dropping, crashing into the table, or hitting any red obstacle/overhang shelf. "
             f"{give_up_note}"
         )
         verdict_criteria = {
-            "ACCEPT_TRAJECTORY": "The robot cleanly grasped the object, lifted it noticeably (>= 8 cm) above the table, and held it stably without dropping or colliding with the table or any obstacle shelf.",
-            "REFINE_GRASP": "The attempt failed (hit an obstacle/shelf, missed, grazed, slipped, dropped, stopped short, or hit the table), but adjusting waypoints/approach direction/tilt/gripper could fix it.",
-            "GIVE_UP": "The task appears physically unreachable/impossible under the current faults/obstacles, or attempts are exhausted.",
+            "ACCEPT_TRAJECTORY": "The robot cleanly completed the stated task goal (e.g., lifted/placed object, opened drawer, pressed button, turned valve/dial, or inserted/turned key) and simulator checks confirm success.",
+            "REFINE_GRASP": "The attempt failed (missed handle/object/button, under-turned/under-pulled, hit obstacle, dropped, or collided with table), but adjusting waypoints/orientation/gripper could fix it.",
+            "GIVE_UP": "The task appears physically unreachable/impossible under the current constraints, or attempts are exhausted.",
         }
         failure_criteria = {
             "NONE_SUCCESS": "Clean grasp and stable lift succeeded with no obstacle collision.",

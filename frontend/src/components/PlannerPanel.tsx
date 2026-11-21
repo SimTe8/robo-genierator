@@ -142,7 +142,28 @@ export function PlannerPanel({
         </div>
       )}
 
-      {/* Auto-opened interactive Live Terminal */}
+      {/* Rollout Videos (shown prominently above terminal as each attempt completes) */}
+      {stitchedVideoUrl && (
+        <div className="mb-4 overflow-hidden rounded-2xl border border-gemini-blue/45 bg-panel-2/70">
+          <div className="flex items-center justify-between border-b border-line/70 px-4 py-2.5 text-xs">
+            <span className="inline-flex items-center gap-2 font-display font-semibold text-gemini-sky">
+              <Sparkles className="size-3.5" /> Stitched Checkpointed Closed-Loop Rollout
+            </span>
+            <span className="font-mono text-[10px] text-faint">Continuous verified trajectory</span>
+          </div>
+          <video
+            src={stitchedVideoUrl}
+            controls
+            autoPlay
+            muted
+            loop
+            playsInline
+            className="aspect-[8/3] w-full bg-black object-cover"
+          />
+        </div>
+      )}
+
+      {/* Auto-opened interactive Live Terminal with Braille turning-dots spinner */}
       {brief && terminalOpen && (
         <div className="mb-4">
           <LiveTerminal
@@ -150,6 +171,7 @@ export function PlannerPanel({
             jobId={brief.job_id}
             lines={terminalLines}
             live={live}
+            activeStage={latestStatus?.message ?? null}
             exitCode={exitCode}
             onStop={onStop}
             onClose={onToggleTerminal}
@@ -185,27 +207,6 @@ export function PlannerPanel({
               </a>
             )}
           </span>
-        </div>
-      )}
-
-      {/* Stitched multi-chunk video showcase */}
-      {stitchedVideoUrl && (
-        <div className="mb-4 overflow-hidden rounded-2xl border border-gemini-blue/45 bg-panel-2/70">
-          <div className="flex items-center justify-between border-b border-line/70 px-4 py-2.5 text-xs">
-            <span className="inline-flex items-center gap-2 font-display font-semibold text-gemini-sky">
-              <Sparkles className="size-3.5" /> Stitched Checkpointed Closed-Loop Rollout
-            </span>
-            <span className="font-mono text-[10px] text-faint">Continuous verified trajectory</span>
-          </div>
-          <video
-            src={stitchedVideoUrl}
-            controls
-            autoPlay
-            muted
-            loop
-            playsInline
-            className="aspect-[8/3] w-full bg-black object-cover"
-          />
         </div>
       )}
 

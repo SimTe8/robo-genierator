@@ -59,6 +59,9 @@ class RunRequest(BaseModel):
     robot_id: RobotId = "franka_emika_panda"
     scene_seed: int = 42
     object_shape: Literal["auto", "box", "cylinder", "sphere"] = "auto"
+    library_object_id: str | None = None
+    library_task_id: str | None = None
+    library_task_params: dict[str, float] = Field(default_factory=dict)
     disabled_joints: list[str] = Field(
         default_factory=list,
         description="Joint or finger names to lock/disable via live fault injection.",
