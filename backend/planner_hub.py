@@ -266,6 +266,11 @@ def _build_run_loop_command(brief: PlannerBrief, script_path: Path) -> tuple[lis
         cmd.extend(["--library-object", brief.object.id, "--library-task", brief.task.id])
         if brief.task_params:
             cmd.extend(["--library-params-json", _json.dumps(brief.task_params)])
+        if brief.clutter:
+            cmd.append("--clutter")
+            cmd.extend([o.id if hasattr(o, "id") else str(o) for o in brief.clutter])
+        if brief.layout_seed is not None:
+            cmd.extend(["--layout-seed", str(brief.layout_seed)])
     if s.chunk_step_deg is not None and task_type in ("in_hand_rotation", "in_hand_spindle"):
         cmd.extend(["--chunk-deg", f"{s.chunk_step_deg:g}"])
     if s.dr_episodes > 0:

@@ -290,6 +290,8 @@ def run_closed_loop(
                 request.library_task_params,
                 robot_id=request.robot_id,
                 disabled_joints=request.disabled_joints,
+                clutter=request.library_clutter or None,
+                layout_seed=request.library_layout_seed,
             )
         return build_scene(
             robot_id=request.robot_id,

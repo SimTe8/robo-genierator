@@ -105,6 +105,8 @@ def main() -> None:
     parser.add_argument("--library-object", type=str, default=None, help="Object ID from backend/library/objects.py (e.g. mug, drawer, valve, button_panel, key).")
     parser.add_argument("--library-task", type=str, default=None, help="Task ID from backend/library/tasks.py (e.g. place_on_pad, open_drawer, turn_joint, press_button, unlock_with_key).")
     parser.add_argument("--library-params-json", type=str, default="{}", help="Optional JSON dict of task params.")
+    parser.add_argument("--clutter", nargs="*", default=[], help="Extra library object IDs placed in the scene.")
+    parser.add_argument("--layout-seed", type=int, default=None, help="Optional layout shuffle seed for multi-object scenes.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--task", type=str, default=None)
     parser.add_argument("--disable", nargs="*", default=[], help="Joints to lock via fault injection.")
@@ -163,6 +165,8 @@ def main() -> None:
         library_object_id=args.library_object,
         library_task_id=args.library_task,
         library_task_params=lib_params,
+        library_clutter=args.clutter,
+        library_layout_seed=args.layout_seed,
         disabled_joints=args.disable,
         max_attempts=args.max_attempts,
         target_rotation_deg=args.target_rotation,
