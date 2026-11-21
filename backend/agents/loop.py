@@ -304,11 +304,21 @@ def run_closed_loop(
     kinematic_summary = summarize_kinematics(init_bundle)
     if request.library_object_id and request.library_task_id:
         import json as _json
+        import mujoco as _mj
         from library.scene import describe as describe_lib_scene
 
+        desc = describe_lib_scene(init_bundle)
+        # Include exact world positions of articulated child parts (buttons, handles, lock plug)
+        part_positions = {}
+        for bid in range(init_bundle.model.nbody):
+            bname = _mj.mj_id2name(init_bundle.model, _mj.mjtObj.mjOBJ_BODY, bid) or ""
+            if any(k in bname for k in ("button", "handle", "drawer", "lock", "lid", "valve", "dial", "pad", "bin", "hole")):
+                part_positions[bname] = [round(float(v), 4) for v in init_bundle.data.xpos[bid]]
+        if part_positions:
+            desc["part_world_positions"] = part_positions
         kinematic_summary += (
-            "\n\nLIBRARY TASK SCENE GEOMETRY (object, fixtures, target pads, articulated joints):\n"
-            + _json.dumps(describe_lib_scene(init_bundle), indent=2)
+            "\n\nLIBRARY TASK SCENE GEOMETRY (object, fixtures, target pads, articulated parts):\n"
+            + _json.dumps(desc, indent=2)
         )
 
     if request.task_type in ("in_hand_rotation", "in_hand_spindle") and request.chunk_step_deg is not None:

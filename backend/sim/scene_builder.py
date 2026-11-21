@@ -217,30 +217,31 @@ def _add_object(spec: mujoco.MjSpec, obj_spec: ObjectSpec) -> None:
 
 
 def _add_cameras(spec: mujoco.MjSpec, robot_id: RobotId) -> None:
-    """Add fixed side_cam and top_cam views tailored to each robot workspace."""
+    """Add two orthogonal unobstructed views (side_cam from -Y, top_cam as front-left 3/4 view)."""
     if robot_id == "franka_emika_panda":
         side_cam = spec.worldbody.add_camera()
         side_cam.name = "side_cam"
-        side_cam.pos = [1.05, -0.85, 0.58]
-        side_cam.quat = _lookat_quat(side_cam.pos, [0.42, 0.0, 0.22])
-        side_cam.fovy = 42.0
+        side_cam.pos = [0.95, -0.78, 0.48]
+        side_cam.quat = _lookat_quat(side_cam.pos, [0.48, 0.0, 0.14])
+        side_cam.fovy = 40.0
 
+        # Orthogonal front-side view (keeps gripper/object unobstructed instead of blocked by arm from directly above)
         top_cam = spec.worldbody.add_camera()
         top_cam.name = "top_cam"
-        top_cam.pos = [0.55, 0.0, 1.35]
-        top_cam.quat = _lookat_quat(top_cam.pos, [0.52, 0.0, 0.02], up=[1.0, 0.0, 0.0])
-        top_cam.fovy = 42.0
+        top_cam.pos = [1.12, 0.52, 0.42]
+        top_cam.quat = _lookat_quat(top_cam.pos, [0.48, 0.0, 0.12])
+        top_cam.fovy = 40.0
     else:
         side_cam = spec.worldbody.add_camera()
         side_cam.name = "side_cam"
-        side_cam.pos = [0.34, -0.34, 0.22]
+        side_cam.pos = [0.30, -0.30, 0.18]
         side_cam.quat = _lookat_quat(side_cam.pos, [0.0, 0.0, 0.02])
         side_cam.fovy = 42.0
 
         top_cam = spec.worldbody.add_camera()
         top_cam.name = "top_cam"
-        top_cam.pos = [0.0, 0.0, 0.62]
-        top_cam.quat = _lookat_quat(top_cam.pos, [0.0, 0.0, -0.05], up=[1.0, 0.0, 0.0])
+        top_cam.pos = [0.32, 0.28, 0.20]
+        top_cam.quat = _lookat_quat(top_cam.pos, [0.0, 0.0, 0.02])
         top_cam.fovy = 42.0
 
 
