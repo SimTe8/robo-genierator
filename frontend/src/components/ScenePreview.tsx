@@ -10,6 +10,12 @@ const fixtureName: Record<string, string> = {
   ghost_table: 'Target outline',
   ghost_air: 'Target orientation',
   nail_board: 'Nail board',
+  sort_pads: 'Red & blue pads',
+  lock: 'Lock',
+  shape_board: 'Shape board',
+  screw_board: 'Screw board',
+  cargo: 'Block to place',
+  bowl: 'Bowl',
 };
 
 export function ScenePreview({

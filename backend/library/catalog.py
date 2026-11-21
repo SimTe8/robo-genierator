@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from config import load_config
-from library.objects import OBJECTS, OBJECTS_BY_ID, ObjectDef, default_part
 from dataclasses import asdict
 
+from config import load_config
 from library.generated import refresh_generated
+from library.multi import can_be_extra
+from library.objects import OBJECTS, OBJECTS_BY_ID, ObjectDef, default_part
 from library.scene import resolve_params
 from library.tasks import TASKS, TASKS_BY_ID, TaskPreset
 from schemas import Catalog, ObjectInfo, ObjectTaskInfo, RobotInfo, TaskParamInfo, TaskPresetInfo
@@ -76,6 +77,7 @@ def object_info(obj: ObjectDef) -> ObjectInfo:
         articulated=obj.articulation is not None,
         thumbnail_url=f"/api/objects/{obj.id}/thumb.png",
         physics=asdict(obj.physics),
+        can_be_extra=can_be_extra(obj),
         tasks=[
             ObjectTaskInfo(
                 task_id=r.task_id,
@@ -92,6 +94,10 @@ def get_catalog() -> Catalog:
     return Catalog(robots=ROBOTS, objects=[object_info(o) for o in OBJECTS], tasks=[task_info(t, None, {p.key: p.default for p in t.params}) for t in TASKS])
 
 
-def render_prompt(object_id: str, task_id: str, params: dict[str, float]) -> str:
+def render_prompt(object_id: str, task_id: str, params: dict[str, float], clutter: list[str] | None = None) -> str:
     obj, task = OBJECTS_BY_ID[object_id], TASKS_BY_ID[task_id]
-    return _fill(task.prompt, obj, resolve_params(task, obj, params))
+    text = _fill(task.prompt, obj, resolve_params(task, obj, params))
+    if clutter:
+        names = [OBJECTS_BY_ID[c].name.lower() for c in clutter]
+        text += f" Other objects are also on the table ({', '.join(names)}): don't knock them over."
+    return text

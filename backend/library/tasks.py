@@ -191,6 +191,36 @@ TASKS += [
         ("The heaviest can is lifted at least {lift_cm} cm (−{lift_tolerance_cm} cm)", "The two light cans are back on the table"),
         params=(Param("lift_cm", "Lift height", "cm", 3, 15, 1, 6),),
     ),
+    # ---- Multi-object (extra bodies come from library/multi.py) ---------------------
+    TaskPreset(
+        "stack_tower", "Stack into a tower", "multi-object", "Several copies on the table: stack them all into one tower.",
+        "tower", "There are {count:.0f} {object} pieces on the table. Stack all of them on top of each other into one stable tower, then let go.",
+        ("All {count:.0f} pieces form one column (each resting on the one below)", "Tower stands on its own, nothing held"),
+        params=(Param("count", "Pieces", "", 2, 4, 1, 3),),
+    ),
+    TaskPreset(
+        "stack_on_block", "Stack on the block", "multi-object", "Place the object on top of the wooden base block.",
+        "stack_on", "Pick up the {object} and place it on top of the wooden block, then let go.",
+        ("Object rests on the top face of the block", "Released, and the block is not knocked over"),
+    ),
+    TaskPreset(
+        "bin_all", "Put them all in the bin", "multi-object", "Clear several copies off the table into the bin, one by one.",
+        "all_inside", "There are {count:.0f} {object} pieces on the table. Put every one of them into the bin, one at a time.",
+        ("All {count:.0f} pieces inside the bin, below the rim", "Nothing held at the end"),
+        fixture="bin", params=(Param("count", "Pieces", "", 2, 4, 1, 3),),
+    ),
+    TaskPreset(
+        "sort_by_color", "Sort by colour", "multi-object", "Red and blue copies: red ones on the red pad, blue ones on the blue pad.",
+        "sort", "There are {count:.0f} {object} pieces, some red and some blue. Put each red one on the red pad and each blue one on the blue pad.",
+        ("Every piece rests on the pad of its own colour", "Nothing held at the end"),
+        fixture="sort_pads", params=(Param("count", "Pieces", "", 2, 4, 1, 4),),
+    ),
+    TaskPreset(
+        "pick_from_clutter", "Pick it out of the clutter", "multi-object", "The target is packed among other objects: lift it without disturbing them.",
+        "clutter_pick", "The {object} is surrounded by {count:.0f} other objects. Pick up only the {object} and hold it {lift_cm:.0f} cm above the table without knocking the others.",
+        ("Target at least {lift_cm} cm (−{lift_tolerance_cm} cm) above its start, held", "No other object moved more than {clutter_disturb_cm} cm"),
+        params=(Param("count", "Other objects", "", 2, 5, 1, 4), Param("lift_cm", "Lift height", "cm", 3, 15, 1, 8)),
+    ),
 ]
 
 TASKS_BY_ID = {t.id: t for t in TASKS}

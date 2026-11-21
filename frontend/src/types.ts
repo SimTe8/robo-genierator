@@ -94,6 +94,8 @@ export interface ObjectInfo {
   articulated: boolean;
   thumbnail_url: string;
   tasks: ObjectTaskInfo[];
+  /** Can be added to another object's scene as clutter (plain rigid objects only) */
+  can_be_extra: boolean;
   /** PG-VLM physical concepts */
   physics: {
     material: string;
@@ -154,6 +156,10 @@ export interface PlannerRequest {
   task_params: Record<string, number>;
   prompt: string;
   settings: PlannerSettings;
+  /** Extra library objects placed on the table (multi-object scenes) */
+  clutter: string[];
+  /** null = default layout; a number = reproducibly shuffled positions (same seed -> same scene) */
+  layout_seed: number | null;
 }
 
 export interface PlannerBrief {
@@ -165,6 +171,8 @@ export interface PlannerBrief {
   task: TaskPresetInfo;
   task_params: Record<string, number>;
   settings: PlannerSettings;
+  clutter: string[];
+  layout_seed: number | null;
   success_criteria: string[];
   default_scene: Record<string, unknown>;
   kinematic_summary: string;
@@ -195,10 +203,26 @@ export interface SceneResponse {
     object_mass_kg: number;
     table_top_z: number;
     fixture: string | null;
+    /** Every other free body in the scene: task-spawned (stack, bin items, sort, base, distractors) or user clutter */
+    other_objects?: SceneObject[];
+    layout_seed?: number | null;
+    /** Set when a shuffle could not be placed and the default layout was used instead */
+    layout_note?: string;
     [key: string]: unknown;
   };
   preview_url: string;
   prompt: string;
+}
+
+export interface SceneObject {
+  body: string;
+  object_id: string;
+  name: string;
+  role: 'stack' | 'bin_item' | 'sort' | 'base' | 'distractor' | 'clutter';
+  colour?: 'red' | 'blue';
+  size_cm: number[];
+  mass_kg: number;
+  position: number[];
 }
 
 export interface Health {

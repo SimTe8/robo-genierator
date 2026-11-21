@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import mujoco
 import numpy as np
@@ -35,6 +35,7 @@ class Snapshot:
     joint: float | None  # target_object_joint (hinge angle or slide distance)
     nail_z: float | None
     lock: float | None
+    others: dict[str, np.ndarray] = field(default_factory=dict)  # multi-object scenes: every extra body's position
 
 
 def _qpos(bundle: SceneBundle, joint: str) -> float | None:
@@ -54,8 +55,9 @@ def snapshot(bundle: SceneBundle) -> Snapshot:
     nail = None
     if mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "fixture_nail") >= 0:
         nail = float(d.xpos[m.body("fixture_nail").id][2])
+    others = {e["body"]: _bpos(bundle, e["body"]) for e in bundle.extras["task"].get("extras", [])}
     return Snapshot(d.xpos[bid].copy(), d.xmat[bid].reshape(3, 3).copy(), _qpos(bundle, "target_object_joint"), nail,
-                    _qpos(bundle, "lock_plug_joint"))
+                    _qpos(bundle, "lock_plug_joint"), others)
 
 
 def hand_contacts(bundle: SceneBundle, body: str = "target_object") -> tuple[set[str], set[str]]:
@@ -136,9 +138,13 @@ def evaluate(bundle: SceneBundle, before: Snapshot, metrics: dict | None = None)
     def lifted_to(target_cm: float) -> bool:
         return lift_cm >= target_cm - th["lift_tolerance_cm"]
 
-    def in_zone(margin_m: float = 0.0) -> bool:
+    def in_zone(margin_m: float = 0.0, p: np.ndarray | None = None) -> bool:
+        p = pos if p is None else p
         c, h = t["zone_center"], t["zone_half"]
-        return abs(pos[0] - c[0]) <= h[0] + margin_m and abs(pos[1] - c[1]) <= h[1] + margin_m
+        return abs(p[0] - c[0]) <= h[0] + margin_m and abs(p[1] - c[1]) <= h[1] + margin_m
+
+    def none_held(bodies: list[str]) -> bool:
+        return all(not hand_contacts(bundle, b)[0] for b in bodies)
 
     checks: dict[str, bool] = {}
     out = {"lift_cm": round(lift_cm, 2), "tilt_deg": round(tilt, 1), "fingers_in_contact": float(len(fingers))}
@@ -251,6 +257,42 @@ def evaluate(bundle: SceneBundle, before: Snapshot, metrics: dict | None = None)
         lifted_ok = lifted_to(params["lift_cm"])
         others_down = all(abs(_bpos(bundle, n)[2] - (top + t["distractor_half_height"])) * 100 <= th["rest_tolerance_cm"] for n in t["distractors"])
         checks.update(heaviest_lifted=lifted_ok, light_cans_on_table=others_down)
+    # ---- multi-object ---------------------------------------------------------------
+    elif goal == "tower":
+        bodies = ["target_object", *t["stack"]]
+        column = sorted((_bpos(bundle, b) for b in bodies), key=lambda v: v[2])
+        tol, max_offset = th["stack_tolerance_cm"] / 100, 0.6 * min(t["half_xy"])
+        levels = int(abs(column[0][2] - (top + half_h)) <= tol)  # bottom piece rests on the table
+        for below, above in zip(column, column[1:]):
+            if levels and abs(above[2] - below[2] - 2 * half_h) <= tol and np.linalg.norm(above[:2] - below[:2]) <= max_offset:
+                levels += 1
+            else:
+                break
+        checks.update(tower_complete=levels == len(bodies), nothing_held=none_held(bodies))
+        out["tower_levels"] = float(levels)
+    elif goal == "stack_on":
+        base, bh = _bpos(bundle, "base_block"), t["base_half"]
+        base_tilt = _angle_between(bundle.data.xmat[bundle.model.body("base_block").id].reshape(3, 3)[:, 2], np.array([0, 0, 1.0]))
+        on_top = (abs(pos[0] - base[0]) <= bh[0] and abs(pos[1] - base[1]) <= bh[1]
+                  and abs(pos[2] - (base[2] + bh[2] + half_h)) * 100 <= th["rest_tolerance_cm"])
+        checks.update(on_block=on_top, released=released, block_upright=base_tilt <= th["upright_tolerance_deg"])
+    elif goal == "all_inside":
+        bodies = ["target_object", *t["bin_items"]]
+        inside = [b for b in bodies if in_zone(p=_bpos(bundle, b)) and _bpos(bundle, b)[2] < t["rim_z"]]
+        checks.update(all_in_bin=len(inside) == len(bodies), nothing_held=none_held(bodies))
+        out["in_bin"] = float(len(inside))
+    elif goal == "sort":
+        pads, ph = t["sort_pads"], t["sort_pad_half"]
+        sorted_ok = 0
+        for body, colour in t["sort_items"].items():
+            q, (cx, cy, _) = _bpos(bundle, body), pads[colour]
+            sorted_ok += abs(q[0] - cx) <= ph and abs(q[1] - cy) <= ph  # stacked on the right pad also counts
+        checks.update(all_sorted=sorted_ok == len(t["sort_items"]), nothing_held=none_held(list(t["sort_items"])))
+        out["sorted"] = float(sorted_ok)
+    elif goal == "clutter_pick":
+        moved = max((float(np.linalg.norm(_bpos(bundle, b) - before.others[b])) for b in t["clutter_distractors"]), default=0.0)
+        checks.update(lifted=lifted_to(params["lift_cm"]), held=bool(fingers), others_undisturbed=moved * 100 <= th["clutter_disturb_cm"])
+        out["max_other_moved_cm"] = round(moved * 100, 2)
     elif goal == "nail":
         assert now.nail_z is not None and before.nail_z is not None
         depth_cm = (before.nail_z - now.nail_z) * 100
