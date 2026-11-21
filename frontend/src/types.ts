@@ -8,11 +8,16 @@ export type DecisionType = 'ACCEPT_TRAJECTORY' | 'REFINE_GRASP' | 'GIVE_UP';
 
 export type FeedbackMode = 'one_shot' | 'text_only' | 'video';
 
+export type TaskTypeOverride = 'auto' | 'pick_and_lift' | 'obstacle_grasp' | 'in_hand_rotation' | 'in_hand_spindle';
+
+export type ObjectShapeOverride = 'auto' | 'box' | 'cylinder' | 'sphere';
+
 export interface Waypoint {
   phase: 'pre_grasp' | 'grasp' | 'close' | 'lift';
   position_offset: [number, number, number];
   orientation_rpy: [number, number, number];
   gripper_target: number;
+  duration_s?: number;
   finger_targets?: Record<string, number> | null;
 }
 
@@ -27,6 +32,7 @@ export interface RunRequest {
 
 export interface IterationEvent {
   attempt_id: number;
+  chunk_id?: number | null;
   model_used: string;
   waypoints: Waypoint[];
   video_url: string;
@@ -35,10 +41,15 @@ export interface IterationEvent {
   decision: DecisionType;
   reason: string;
   latency_s: number;
+  decision_confidence?: number | null;
+  decision_probabilities?: Record<string, number> | null;
+  failure_mode?: string | null;
+  grasp_score?: number | null;
+  trajectory_path?: string | null;
 }
 
 // ---------------------------------------------------------------------------
-// Web UI -> Gemini 4 planner hand-off (mirrors the bottom of backend/schemas.py)
+// Web UI -> Gemini 4 planner hand-off (mirrors backend/schemas.py)
 // ---------------------------------------------------------------------------
 
 export interface TaskParamInfo {
@@ -110,12 +121,39 @@ export interface Catalog {
   tasks: TaskPresetInfo[];
 }
 
+export interface PlannerSettings {
+  max_attempts: number;
+  feedback_mode: FeedbackMode;
+  planner_model: string;
+  critic_model: string;
+  scene_seed: number;
+  disabled_joints: string[];
+  chunk_step_deg: number | null;
+  dr_episodes: number;
+  task_type_override: TaskTypeOverride;
+  object_shape_override: ObjectShapeOverride;
+}
+
+export const DEFAULT_PLANNER_SETTINGS: PlannerSettings = {
+  max_attempts: 4,
+  feedback_mode: 'video',
+  planner_model: 'models/gemini-4-neon',
+  critic_model: 'models/gemini-4-hydrogen',
+  scene_seed: 42,
+  disabled_joints: [],
+  chunk_step_deg: null,
+  dr_episodes: 0,
+  task_type_override: 'auto',
+  object_shape_override: 'auto',
+};
+
 export interface PlannerRequest {
   robot_id: string;
   object_id: string;
   task_id: string;
   task_params: Record<string, number>;
   prompt: string;
+  settings: PlannerSettings;
 }
 
 export interface PlannerBrief {
@@ -126,6 +164,7 @@ export interface PlannerBrief {
   object: ObjectInfo;
   task: TaskPresetInfo;
   task_params: Record<string, number>;
+  settings: PlannerSettings;
   success_criteria: string[];
   default_scene: Record<string, unknown>;
   kinematic_summary: string;
@@ -141,7 +180,7 @@ export interface CheckResult {
 export interface JobEvent {
   job_id: string;
   seq: number;
-  kind: 'status' | 'attempt' | 'done' | 'error';
+  kind: 'status' | 'terminal' | 'attempt' | 'done' | 'error';
   message: string;
   iteration: IterationEvent | null;
   check: CheckResult | null;
@@ -165,6 +204,8 @@ export interface SceneResponse {
 export interface Health {
   mujoco: string;
   planner: string | null;
+  planner_mode?: string | null;
+  planner_path?: string | null;
 }
 
 // ---- Side quest: Gemini asset generation -----------------------------------

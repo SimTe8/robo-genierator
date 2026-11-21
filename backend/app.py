@@ -1,4 +1,4 @@
-"""FastAPI backend: object/task library, scene previews, hand-off to the Gemini 4 planner (SSE progress).
+"""FastAPI backend: object/task library, scene previews, hand-off to the Gemini 4 planner (SSE progress + live terminal).
 
 Run from the repo root:
     uvicorn app:app --app-dir backend --port 8000
@@ -11,6 +11,8 @@ import gl_setup  # noqa: F401  (must precede mujoco)
 import asyncio
 import hashlib
 import json
+import os
+import signal
 import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -24,14 +26,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from config import OUTPUTS_DIR
 from agents import gemini_client
+from config import OUTPUTS_DIR
 from library.catalog import get_catalog, object_info, render_prompt
 from library.generated import GeneratedAsset, refresh_generated, to_object_def
 from library.objects import OBJECTS_BY_ID
 from library.render import render_preview, render_thumbnail
 from library.scene import check_combo
-from planner_hub import JOBS_DIR, EventLog, SelectionError, load_planner, make_brief
+from planner_hub import JOBS_DIR, EventLog, SelectionError, make_brief, planner_status
 from schemas import Catalog, PlannerBrief, PlannerRequest
 from sidequest.asset_forge import forge, save_draft, sim_check
 
@@ -63,8 +65,7 @@ async def _in_pool(fn, *args):
 
 @app.get("/api/health")
 def health() -> dict:
-    planner = load_planner()
-    return {"mujoco": mujoco.__version__, "planner": getattr(planner, "name", None)}
+    return {"mujoco": mujoco.__version__, **planner_status()}
 
 
 @app.get("/api/catalog", response_model=Catalog)
@@ -110,13 +111,31 @@ async def create_job(req: PlannerRequest) -> PlannerBrief:
     job_dir = JOBS_DIR / brief.job_id
     job_dir.mkdir(parents=True)
     (job_dir / "job.json").write_text(brief.model_dump_json(indent=2))
-    EventLog(job_dir, brief.job_id)("status", "Brief compiled and saved; handing off to the planner…")
+    EventLog(job_dir, brief.job_id)("status", "Brief compiled and saved; starting Gemini 4 planner-critic worker…")
     subprocess.Popen(
         [sys.executable, str(BACKEND_DIR / "run_worker.py"), str(job_dir)],
         stdout=open(job_dir / "worker.log", "w"),
         stderr=subprocess.STDOUT,
     )
     return brief
+
+
+@app.post("/api/planner/jobs/{job_id}/stop")
+async def stop_job(job_id: str) -> dict:
+    """Terminate an active planner-critic subprocess cleanly."""
+    job_dir = (JOBS_DIR / job_id).resolve()
+    if job_dir.parent != JOBS_DIR.resolve() or not job_dir.is_dir():
+        raise HTTPException(404, "unknown job")
+    pid_file = job_dir / "worker.pid"
+    if not pid_file.exists():
+        return {"stopped": False, "reason": "no running process"}
+    try:
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+        os.kill(pid, signal.SIGTERM)
+        return {"stopped": True, "pid": pid}
+    except (ValueError, ProcessLookupError):
+        pid_file.unlink(missing_ok=True)
+        return {"stopped": False, "reason": "process already finished"}
 
 
 @app.get("/api/planner/jobs/{job_id}/events")
@@ -140,8 +159,8 @@ async def job_events(job_id: str):
                     if json.loads(line)["kind"] in ("done", "error"):
                         return
                 idle = 0.0 if lines else idle
-            await asyncio.sleep(0.25)
-            idle += 0.25
+            await asyncio.sleep(0.15)
+            idle += 0.15
 
     return EventSourceResponse(stream())
 

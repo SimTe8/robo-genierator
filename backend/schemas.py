@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 
 RobotId = Literal["franka_emika_panda", "wonik_allegro"]
 DecisionType = Literal["ACCEPT_TRAJECTORY", "REFINE_GRASP", "GIVE_UP"]
+FeedbackMode = Literal["one_shot", "text_only", "video"]
+TaskTypeOverride = Literal["auto", "pick_and_lift", "obstacle_grasp", "in_hand_rotation", "in_hand_spindle"]
+ObjectShapeOverride = Literal["auto", "box", "cylinder", "sphere"]
 
 
 class Waypoint(BaseModel):
@@ -32,6 +35,12 @@ class Waypoint(BaseModel):
         le=1.0,
         description="Normalized gripper/finger closure (0.0 = open, 1.0 = closed).",
     )
+    duration_s: float = Field(
+        default=0.6,
+        ge=0.2,
+        le=2.0,
+        description="Duration of this waypoint/gait step in seconds.",
+    )
     finger_targets: dict[str, float] | None = Field(
         default=None,
         description="Optional per-finger closure overrides for multi-fingered hands.",
@@ -51,26 +60,32 @@ class RunRequest(BaseModel):
         default_factory=list,
         description="Joint or finger names to lock/disable via live fault injection.",
     )
-    max_attempts: int = Field(default=4, ge=1, le=8)
-    feedback_mode: Literal["one_shot", "text_only", "video"] = "video"
+    max_attempts: int = Field(default=4, ge=1, le=12)
+    feedback_mode: FeedbackMode = "video"
 
 
 class IterationEvent(BaseModel):
     """Shared backend <-> frontend event emitted after each closed-loop attempt."""
 
     attempt_id: int
+    chunk_id: int | None = None
     model_used: str
-    waypoints: list[Waypoint]
+    waypoints: list[Waypoint] = Field(default_factory=list)
     video_url: str
     telemetry_summary: str
     sim_success: bool
     decision: DecisionType
     reason: str
     latency_s: float
+    decision_confidence: float | None = None
+    decision_probabilities: dict[str, float] | None = None
+    failure_mode: str | None = None
+    grasp_score: int | None = None
+    trajectory_path: str | None = None
 
 
 # ---------------------------------------------------------------------------
-# Web UI -> Gemini 4 planner hand-off (object + task library; robot is the Allegro hand)
+# Web UI -> Gemini 4 planner hand-off (object + task library)
 # ---------------------------------------------------------------------------
 
 
@@ -118,7 +133,9 @@ class ObjectInfo(BaseModel):
     articulated: bool
     thumbnail_url: str
     tasks: list[ObjectTaskInfo]
-    physics: dict[str, Any] = Field(description="PG-VLM concepts: material, fragility, deformability, transparency, contents, can_contain_liquid, sealed")
+    physics: dict[str, Any] = Field(
+        description="PG-VLM concepts: material, fragility, deformability, transparency, contents, can_contain_liquid, sealed"
+    )
 
 
 class RobotInfo(BaseModel):
@@ -136,14 +153,30 @@ class Catalog(BaseModel):
     tasks: list[TaskPresetInfo]
 
 
+class PlannerSettings(BaseModel):
+    """User-adjustable controls for the Gemini 4 Planner-Critic loop."""
+
+    max_attempts: int = Field(default=4, ge=1, le=12)
+    feedback_mode: FeedbackMode = "video"
+    planner_model: str = "models/gemini-4-neon"
+    critic_model: str = "models/gemini-4-hydrogen"
+    scene_seed: int = 42
+    disabled_joints: list[str] = Field(default_factory=list)
+    chunk_step_deg: float | None = Field(default=None, ge=30.0, le=180.0)
+    dr_episodes: int = Field(default=0, ge=0, le=20)
+    task_type_override: TaskTypeOverride = "auto"
+    object_shape_override: ObjectShapeOverride = "auto"
+
+
 class PlannerRequest(BaseModel):
-    """What the UI sends: object + task + the (editable) prompt. No conditions — the planner decides those."""
+    """What the UI sends: object + task + prompt + optional planner-critic loop controls."""
 
     robot_id: str = "wonik_allegro"
     object_id: str
     task_id: str
     task_params: dict[str, float] = Field(default_factory=dict)
     prompt: str = Field(min_length=1)
+    settings: PlannerSettings = Field(default_factory=PlannerSettings)
 
 
 class PlannerBrief(BaseModel):
@@ -156,6 +189,7 @@ class PlannerBrief(BaseModel):
     object: ObjectInfo
     task: TaskPresetInfo
     task_params: dict[str, float]
+    settings: PlannerSettings = Field(default_factory=PlannerSettings)
     success_criteria: list[str]
     default_scene: dict[str, Any] = Field(description="Object/fixture pose of the default scene (planner may randomise).")
     kinematic_summary: str
@@ -171,14 +205,11 @@ class CheckResult(BaseModel):
 
 
 class JobEvent(BaseModel):
-    """One line of a job's event stream (outputs/jobs/<job_id>/events.jsonl, streamed to the UI over SSE).
-
-    The planner emits these. `iteration` carries the shared IterationEvent when an attempt finishes.
-    """
+    """One line of a job's event stream (outputs/jobs/<job_id>/events.jsonl, streamed to the UI over SSE)."""
 
     job_id: str
     seq: int
-    kind: Literal["status", "attempt", "done", "error"]
+    kind: Literal["status", "terminal", "attempt", "done", "error"]
     message: str
     iteration: IterationEvent | None = None
     check: CheckResult | None = None
