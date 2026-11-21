@@ -13,7 +13,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MENAGERIE_DIR = REPO_ROOT / "assets" / "mujoco_menagerie"
 
-RobotId = Literal["franka_emika_panda", "wonik_allegro"]
+RobotId = Literal["franka_emika_panda", "wonik_allegro", "wuji_hand"]
 TaskType = Literal["pick_and_lift", "obstacle_grasp", "in_hand_rotation", "in_hand_spindle"]
 ObjectShape = Literal["box", "cylinder", "sphere"]
 

@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-RobotId = Literal["franka_emika_panda", "wonik_allegro"]
+RobotId = Literal["franka_emika_panda", "wonik_allegro", "wuji_hand"]
 TaskType = Literal["pick_and_lift", "obstacle_grasp", "in_hand_rotation", "in_hand_spindle"]
 DecisionType = Literal["ACCEPT_TRAJECTORY", "REFINE_GRASP", "GIVE_UP"]
 FeedbackMode = Literal["one_shot", "text_only", "video"]

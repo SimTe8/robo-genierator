@@ -199,9 +199,9 @@ def _build_run_loop_command(brief: PlannerBrief, script_path: Path) -> tuple[lis
     else:
         task_type = "pick_and_lift"
 
-    # 2. Robot mapping (run_loop.py currently supports franka_emika_panda and wonik_allegro)
+    # 2. Robot mapping (native support for franka_emika_panda, wonik_allegro, and wuji_hand)
     robot_arg = brief.robot.id
-    if task_type in ("in_hand_rotation", "in_hand_spindle"):
+    if s.task_type_override != "auto" and task_type in ("in_hand_rotation", "in_hand_spindle"):
         if robot_arg != "wonik_allegro":
             notes.append(
                 f"[bridge] Task type '{task_type}' uses the dexterous Allegro hand in run_loop.py (selected: {brief.robot.name})."
@@ -213,9 +213,9 @@ def _build_run_loop_command(brief: PlannerBrief, script_path: Path) -> tuple[lis
                 f"[bridge] Task type 'obstacle_grasp' uses Franka Panda in run_loop.py (selected: {brief.robot.name})."
             )
             robot_arg = "franka_emika_panda"
-    elif robot_arg == "wuji_hand":
+    elif robot_arg == "wuji_hand" and s.task_type_override != "auto":
         notes.append(
-            "[bridge] Wuji hand MJCF is active for scene preview; routing planner-critic execution to wonik_allegro in run_loop.py."
+            "[bridge] Custom task_type_override routed to wonik_allegro; use task_type_override=auto for native Wuji hand."
         )
         robot_arg = "wonik_allegro"
 

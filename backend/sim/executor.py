@@ -145,13 +145,15 @@ def _set_allegro_fingers(
     finger_targets: dict[str, float] | None,
     disabled_joints: set[str],
 ) -> None:
-    """Map normalized closure [0=open, 1=closed] to Allegro's 16 finger actuators."""
-    # Finger actuator prefixes: ff (index), mf (middle), rf (ring), th (thumb)
+    """Map normalized closure [0=open, 1=closed] to Allegro (16-DOF) or Wuji (20-DOF) finger actuators."""
+    # Allegro prefixes: ff (index), mf (middle), rf (ring), th (thumb)
+    # Wuji prefixes: right_finger1 (thumb), right_finger2 (index), right_finger3 (middle), right_finger4 (ring), right_finger5 (little)
     prefix_map = {
-        "index": "ff",
-        "middle": "mf",
-        "ring": "rf",
-        "thumb": "th",
+        "thumb": ("th", "right_finger1"),
+        "index": ("ff", "right_finger2"),
+        "middle": ("mf", "right_finger3"),
+        "ring": ("rf", "right_finger4"),
+        "little": ("right_finger5",),
     }
     defaults = {k: gripper_target for k in prefix_map}
     if finger_targets:
@@ -168,13 +170,22 @@ def _set_allegro_fingers(
 
         lo, hi = model.actuator_ctrlrange[aid]
         closure = gripper_target
-        for fname, pref in prefix_map.items():
-            if aname.startswith(pref):
+        for fname, prefs in prefix_map.items():
+            if any(aname.startswith(p) for p in prefs):
                 closure = defaults[fname]
                 break
 
-        # Abduction joints (a0) stay centered; flexion joints (a1, a2, a3) close with closure
-        if aname.endswith("0"):
+        # Wuji hand: joint2 is abduction (keep centered for fingers 2-5, oppose for thumb), joint1/3/4 flex
+        if aname.startswith("right_finger"):
+            if "joint2" in aname:
+                if aname.startswith("right_finger1"):
+                    data.ctrl[aid] = lo + 0.65 * (hi - lo) * closure
+                else:
+                    data.ctrl[aid] = 0.0
+            else:
+                data.ctrl[aid] = lo + (hi - lo) * (0.08 + 0.72 * closure)
+        # Allegro hand: a0 is abduction, a1/a2/a3 flex
+        elif aname.endswith("0"):
             if aname.startswith("th"):
                 data.ctrl[aid] = lo + 0.75 * (hi - lo) * closure
             else:

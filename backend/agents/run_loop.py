@@ -89,7 +89,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run closed-loop Gemini 4 Planner-Critic pipeline.")
     parser.add_argument(
         "--robot",
-        choices=["franka_emika_panda", "wonik_allegro"],
+        choices=["franka_emika_panda", "wonik_allegro", "wuji_hand"],
         default="franka_emika_panda",
     )
     parser.add_argument(
