@@ -93,6 +93,10 @@ python backend/agents/run_loop.py --task-type in_hand_rotation --seed 42 --targe
 
 # Start FastAPI + SSE Backend Server (for React Frontend)
 MUJOCO_GL=egl uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Run § 6 Evaluation Benchmark (3-Arm Ablation + Model-Duo Study + Where It Breaks)
+python backend/agents/benchmark.py --workers 4
+python backend/agents/benchmark.py --quick --workers 4
 ```
 
 ## Asset Attribution & Licenses
