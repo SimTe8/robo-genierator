@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MENAGERIE_DIR = REPO_ROOT / "assets" / "mujoco_menagerie"
 
 RobotId = Literal["franka_emika_panda", "wonik_allegro"]
-TaskType = Literal["pick_and_lift", "in_hand_rotation"]
+TaskType = Literal["pick_and_lift", "obstacle_grasp", "in_hand_rotation", "in_hand_spindle"]
 ObjectShape = Literal["box", "cylinder", "sphere"]
 
 
@@ -56,11 +56,17 @@ def generate_object_spec(
     seed: int,
     robot_id: RobotId,
     table_top_z: float,
+    object_shape: str = "auto",
+    dr_rng: np.random.Generator | None = None,
 ) -> ObjectSpec:
-    """Deterministically generate a graspable object from a seed."""
+    """Deterministically generate a graspable object from a seed (with optional shape override & DR jitter)."""
     rng = np.random.default_rng(seed)
     shapes: list[ObjectShape] = ["box", "cylinder", "sphere"]
-    shape: ObjectShape = shapes[int(rng.integers(0, len(shapes)))]
+    if object_shape in ("box", "cylinder", "sphere"):
+        shape: ObjectShape = object_shape  # type: ignore[assignment]
+        _ = rng.integers(0, len(shapes))  # keep RNG stream aligned
+    else:
+        shape = shapes[int(rng.integers(0, len(shapes)))]
 
     # High-contrast colors for clear visual diagnosis by Gemini 4
     palette = [
@@ -71,31 +77,37 @@ def generate_object_spec(
     ]
     rgba = palette[int(rng.integers(0, len(palette)))]
 
+    size_scale = float(dr_rng.uniform(0.88, 1.12)) if dr_rng is not None else 1.0
     if shape == "box":
-        hx = float(rng.uniform(0.020, 0.032))
-        hy = float(rng.uniform(0.020, 0.032))
-        hz = float(rng.uniform(0.030, 0.050))
+        hx = float(rng.uniform(0.020, 0.030)) * size_scale
+        hy = float(rng.uniform(0.020, 0.030)) * size_scale
+        hz = float(rng.uniform(0.030, 0.048)) * size_scale
         size = [hx, hy, hz]
         half_h = hz
     elif shape == "cylinder":
-        radius = float(rng.uniform(0.020, 0.032))
-        half_h = float(rng.uniform(0.032, 0.052))
+        radius = float(rng.uniform(0.020, 0.030)) * size_scale
+        half_h = float(rng.uniform(0.032, 0.050)) * size_scale
         size = [radius, half_h, 0.0]
     else:  # sphere
-        radius = float(rng.uniform(0.024, 0.034))
+        radius = float(rng.uniform(0.024, 0.032)) * size_scale
         size = [radius, 0.0, 0.0]
         half_h = radius
 
     if robot_id == "franka_emika_panda":
-        x = float(rng.uniform(0.42, 0.60))
-        y = float(rng.uniform(-0.16, 0.16))
+        x = float(rng.uniform(0.44, 0.58))
+        y = float(rng.uniform(-0.14, 0.14))
+        if dr_rng is not None:
+            x = float(np.clip(x + dr_rng.uniform(-0.04, 0.04), 0.38, 0.64))
+            y = float(np.clip(y + dr_rng.uniform(-0.05, 0.05), -0.20, 0.20))
     else:
         x = float(rng.uniform(-0.04, 0.04))
         y = float(rng.uniform(-0.04, 0.04))
 
     z = table_top_z + half_h + 0.002
     yaw = float(rng.uniform(-math.pi, math.pi))
-    mass = float(rng.uniform(0.08, 0.18))
+    if dr_rng is not None:
+        yaw += float(dr_rng.uniform(-0.35, 0.35))
+    mass = float(rng.uniform(0.08, 0.18)) * (float(dr_rng.uniform(0.75, 1.25)) if dr_rng is not None else 1.0)
 
     return ObjectSpec(
         shape=shape,
@@ -211,16 +223,51 @@ def _add_cameras(spec: mujoco.MjSpec, robot_id: RobotId) -> None:
         top_cam.fovy = 42.0
 
 
+def _add_overhang_obstacle(
+    spec: mujoco.MjSpec,
+    obj_spec: ObjectSpec,
+    table_top_z: float,
+) -> None:
+    """Add a red overhang barrier right above/behind the object so naive top-down fails, while angled front (-X) entry succeeds cleanly."""
+    ox, oy, oz = obj_spec.pos
+    shelf_z = oz + obj_spec.half_height + 0.22
+    shelf_body = spec.worldbody.add_body()
+    shelf_body.name = "obstacle_shelf"
+    # Overhang lip sits at ox + 0.025: Panda's vertical wrist (10cm wide) slams into it on naive top-down,
+    # while an angled front (-X) approach slips cleanly underneath with zero collisions!
+    shelf_body.pos = [ox + 0.10, oy, shelf_z]
+
+    roof = shelf_body.add_geom()
+    roof.name = "obstacle_roof"
+    roof.type = mujoco.mjtGeom.mjGEOM_BOX
+    roof.size = [0.075, 0.14, 0.012]
+    roof.rgba = [0.90, 0.20, 0.18, 0.72]
+
+    pillar_h = max(0.04, (shelf_z - table_top_z) / 2.0)
+    back_wall = spec.worldbody.add_body()
+    back_wall.name = "obstacle_back_post"
+    back_wall.pos = [ox + 0.17, oy, table_top_z + pillar_h]
+    post = back_wall.add_geom()
+    post.name = "obstacle_post"
+    post.type = mujoco.mjtGeom.mjGEOM_BOX
+    post.size = [0.012, 0.14, pillar_h]
+    post.rgba = [0.75, 0.18, 0.16, 0.85]
+
+
 def build_scene(
     robot_id: RobotId = "franka_emika_panda",
     scene_seed: int = 42,
     disabled_joints: list[str] | None = None,
     task_type: TaskType = "pick_and_lift",
+    object_shape: str = "auto",
+    dr_seed: int | None = None,
 ) -> SceneBundle:
     """Build a MuJoCo model & data with the requested robot and seeded object."""
     disabled_joints = list(disabled_joints or [])
+    dr_rng = np.random.default_rng(dr_seed) if dr_seed is not None else None
+    friction_scale = float(dr_rng.uniform(0.75, 1.25)) if dr_rng is not None else 1.0
 
-    if task_type == "in_hand_rotation":
+    if task_type in ("in_hand_rotation", "in_hand_spindle"):
         robot_id = "wonik_allegro"
         scene_xml = MENAGERIE_DIR / "wonik_allegro" / "scene_right.xml"
         spec = mujoco.MjSpec.from_file(str(scene_xml))
@@ -230,26 +277,56 @@ def build_scene(
             spec.delete(default_obj)
 
         rng = np.random.default_rng(scene_seed)
-        half_ext = float(rng.uniform(0.028, 0.034))
-        yaw = float(rng.uniform(-0.35, 0.35))
+        size_scale = float(dr_rng.uniform(0.92, 1.08)) if dr_rng is not None else 1.0
+        half_ext = float(rng.uniform(0.024, 0.028)) * size_scale
+        yaw = float(rng.uniform(-0.25, 0.25)) + (float(dr_rng.uniform(-0.3, 0.3)) if dr_rng is not None else 0.0)
+
+        # Tilt palm 18 deg around world Y so the cube nests into the finger cradle
+        palm_body = spec.body("palm")
+        if palm_body is not None:
+            from scipy.spatial.transform import Rotation as _Rot
+            q_orig_xyzw = np.array([1.0, 0.0, 1.0, 0.0]) / np.sqrt(2.0)
+            r_tilt = _Rot.from_euler("y", 18.0, degrees=True)
+            r_new = r_tilt * _Rot.from_quat(q_orig_xyzw)
+            q_new_xyzw = r_new.as_quat()
+            palm_body.quat = [float(q_new_xyzw[3]), float(q_new_xyzw[0]), float(q_new_xyzw[1]), float(q_new_xyzw[2])]
+
         obj_spec = ObjectSpec(
             shape="box",
             size=[half_ext, half_ext, half_ext],
-            pos=[0.055, 0.005, 0.058],
+            pos=[0.015, 0.0, 0.056],
             quat=_yaw_to_quat(yaw),
             rgba=[0.18, 0.48, 0.90, 1.0],
-            mass=0.08,
+            mass=0.065 * (float(dr_rng.uniform(0.8, 1.2)) if dr_rng is not None else 1.0),
         )
 
-        # Spawn multi-face orientation cube in the palm so rotation is visually unmistakable
+        # Spawn multi-face orientation cube centered inside the 4-finger cage
         obj_body = spec.worldbody.add_body()
         obj_body.name = "target_object"
         obj_body.pos = obj_spec.pos
         obj_body.quat = obj_spec.quat
 
-        free_jnt = obj_body.add_joint()
-        free_jnt.name = "target_object_freejoint"
-        free_jnt.type = mujoco.mjtJoint.mjJNT_FREE
+        if task_type == "in_hand_spindle":
+            # Low-friction vertical spindle hinge: real 16-DOF finger contact torque without gravity ejection!
+            spindle_jnt = obj_body.add_joint()
+            spindle_jnt.name = "target_object_spindle"
+            spindle_jnt.type = mujoco.mjtJoint.mjJNT_HINGE
+            spindle_jnt.axis = [0.0, 0.0, 1.0]
+            spindle_jnt.damping = [0.002, 0.0, 0.0]
+            spindle_jnt.limited = False
+            # Visual spindle pin so judges clearly see the rotary dial/valve axis
+            pin = obj_body.add_geom()
+            pin.name = "spindle_pin"
+            pin.type = mujoco.mjtGeom.mjGEOM_CYLINDER
+            pin.size = [0.004, half_ext + 0.014, 0.0]
+            pin.rgba = [0.85, 0.85, 0.88, 1.0]
+            pin.contype = 0
+            pin.conaffinity = 0
+            pin.mass = 0.0
+        else:
+            free_jnt = obj_body.add_joint()
+            free_jnt.name = "target_object_freejoint"
+            free_jnt.type = mujoco.mjtJoint.mjJNT_FREE
 
         cube_geom = obj_body.add_geom()
         cube_geom.name = "target_object_geom"
@@ -257,15 +334,15 @@ def build_scene(
         cube_geom.size = obj_spec.size
         cube_geom.rgba = obj_spec.rgba
         cube_geom.mass = obj_spec.mass
-        cube_geom.condim = 6
-        cube_geom.friction = [0.9, 0.005, 0.001]
+        cube_geom.condim = 4
+        cube_geom.friction = [1.2 * friction_scale, 0.005, 0.0002]
 
-        # Bright red marker on +X face & yellow marker on +Y face for clear visual tracking
+        # Distinct colored markers on side faces + asymmetric pointer stripe on top (+Z) face
         marker_x = obj_body.add_geom()
         marker_x.name = "cube_marker_x"
         marker_x.type = mujoco.mjtGeom.mjGEOM_BOX
-        marker_x.pos = [half_ext + 0.001, 0.0, 0.0]
-        marker_x.size = [0.0015, half_ext * 0.65, half_ext * 0.65]
+        marker_x.pos = [half_ext + 0.0008, 0.0, 0.0]
+        marker_x.size = [0.001, half_ext * 0.7, half_ext * 0.7]
         marker_x.rgba = [0.95, 0.18, 0.15, 1.0]
         marker_x.contype = 0
         marker_x.conaffinity = 0
@@ -274,8 +351,8 @@ def build_scene(
         marker_y = obj_body.add_geom()
         marker_y.name = "cube_marker_y"
         marker_y.type = mujoco.mjtGeom.mjGEOM_BOX
-        marker_y.pos = [0.0, half_ext + 0.001, 0.0]
-        marker_y.size = [half_ext * 0.65, 0.0015, half_ext * 0.65]
+        marker_y.pos = [0.0, half_ext + 0.0008, 0.0]
+        marker_y.size = [half_ext * 0.7, 0.001, half_ext * 0.7]
         marker_y.rgba = [0.98, 0.82, 0.12, 1.0]
         marker_y.contype = 0
         marker_y.conaffinity = 0
@@ -284,36 +361,50 @@ def build_scene(
         marker_top = obj_body.add_geom()
         marker_top.name = "cube_marker_top_arrow"
         marker_top.type = mujoco.mjtGeom.mjGEOM_BOX
-        marker_top.pos = [half_ext * 0.4, 0.0, half_ext + 0.001]
-        marker_top.size = [half_ext * 0.45, half_ext * 0.18, 0.0015]
+        marker_top.pos = [half_ext * 0.42, 0.0, half_ext + 0.0008]
+        marker_top.size = [half_ext * 0.48, half_ext * 0.22, 0.001]
         marker_top.rgba = [0.95, 0.18, 0.15, 1.0]
         marker_top.contype = 0
         marker_top.conaffinity = 0
         marker_top.mass = 0.0
 
-        # Close-up cameras focused on the palm and cube
+        marker_top_dot = obj_body.add_geom()
+        marker_top_dot.name = "cube_marker_top_y"
+        marker_top_dot.type = mujoco.mjtGeom.mjGEOM_BOX
+        marker_top_dot.pos = [0.0, half_ext * 0.48, half_ext + 0.0008]
+        marker_top_dot.size = [half_ext * 0.20, half_ext * 0.35, 0.001]
+        marker_top_dot.rgba = [0.98, 0.82, 0.12, 1.0]
+        marker_top_dot.contype = 0
+        marker_top_dot.conaffinity = 0
+        marker_top_dot.mass = 0.0
+
+        # Properly centered close-up cameras showing the entire palm, all 4 fingers, and cube
         side_cam = spec.worldbody.add_camera()
         side_cam.name = "side_cam"
-        side_cam.pos = [0.22, -0.24, 0.16]
-        side_cam.quat = _lookat_quat(side_cam.pos, [0.05, 0.0, 0.05])
-        side_cam.fovy = 40.0
+        side_cam.pos = [0.16, -0.26, 0.16]
+        side_cam.quat = _lookat_quat(side_cam.pos, [0.01, 0.0, 0.045])
+        side_cam.fovy = 42.0
 
         top_cam = spec.worldbody.add_camera()
         top_cam.name = "top_cam"
-        top_cam.pos = [0.05, 0.0, 0.34]
-        top_cam.quat = _lookat_quat(top_cam.pos, [0.05, 0.0, 0.04], up=[1.0, 0.0, 0.0])
-        top_cam.fovy = 40.0
+        top_cam.pos = [0.01, 0.0, 0.34]
+        top_cam.quat = _lookat_quat(top_cam.pos, [0.01, 0.0, 0.04], up=[1.0, 0.0, 0.0])
+        top_cam.fovy = 44.0
 
         table_top_z = -0.10
         model = spec.compile()
         data = mujoco.MjData(model)
 
-        # Pre-cradle fingers slightly so the cube sits safely in the palm at t=0
+        # Pre-curl all 4 fingers into a snug fingertips-on-cube cradle at t=0
+        # Also bump Menagerie's soft default kp=1.0 to 2.0 so fingertips have realistic torque authority
+        model.actuator_gainprm[:, 0] *= 2.0
+        model.actuator_biasprm[:, 1] *= 2.0
+
         cradle_ctrl = {
-            "ffa0": 0.0, "ffa1": 0.45, "ffa2": 0.55, "ffa3": 0.45,
-            "mfa0": 0.0, "mfa1": 0.45, "mfa2": 0.55, "mfa3": 0.45,
-            "rfa0": 0.0, "rfa1": 0.45, "rfa2": 0.55, "rfa3": 0.45,
-            "tha0": 1.15, "tha1": 0.35, "tha2": 0.45, "tha3": 0.45,
+            "ffa0": 0.08, "ffa1": 0.78, "ffa2": 0.92, "ffa3": 0.65,
+            "mfa0": 0.00, "mfa1": 0.78, "mfa2": 0.92, "mfa3": 0.65,
+            "rfa0": -0.08, "rfa1": 0.78, "rfa2": 0.92, "rfa3": 0.65,
+            "tha0": 1.25, "tha1": 0.35, "tha2": 0.70, "tha3": 0.65,
         }
         for aid in range(model.nu):
             aname = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, aid) or ""
@@ -327,7 +418,13 @@ def build_scene(
         scene_xml = MENAGERIE_DIR / "franka_emika_panda" / "scene.xml"
         spec = mujoco.MjSpec.from_file(str(scene_xml))
         table_top_z = 0.02
-        obj_spec = generate_object_spec(scene_seed, robot_id, table_top_z)
+        obj_spec = generate_object_spec(
+            scene_seed,
+            robot_id,
+            table_top_z,
+            object_shape=object_shape,
+            dr_rng=dr_rng,
+        )
 
         # Add an end-effector site between the Panda fingertips for IK
         hand_body = spec.body("hand")
@@ -345,17 +442,29 @@ def build_scene(
             table_top_z=table_top_z,
             obj_spec=obj_spec,
         )
+        if task_type == "obstacle_grasp":
+            _add_overhang_obstacle(spec, obj_spec, table_top_z)
         _add_cameras(spec, robot_id)
 
         model = spec.compile()
+        # Apply optional DR friction jitter to target object
+        if dr_rng is not None:
+            ogid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "target_object_geom")
+            if ogid >= 0:
+                model.geom_friction[ogid, 0] *= friction_scale
         data = mujoco.MjData(model)
 
         # Initialize Panda to its 'home' keyframe if available
         home_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
         if home_id >= 0:
-            # Copy only robot joints/ctrl from keyframe so target_object stays at obj_spec.pos
-            key_qpos = model.key_qpos[home_id]
-            key_ctrl = model.key_ctrl[home_id]
+            key_qpos = model.key_qpos[home_id].copy()
+            key_ctrl = model.key_ctrl[home_id].copy()
+            if task_type == "obstacle_grasp":
+                # Retract arm slightly back (-X) so initial pose starts clearly in front of the shelf
+                key_qpos[1] = -0.45
+                key_qpos[3] = -2.15
+                key_qpos[5] = 1.70
+                key_ctrl[:7] = key_qpos[:7]
             n_robot_q = min(9, model.nq)
             data.qpos[:n_robot_q] = key_qpos[:n_robot_q]
             data.ctrl[: len(key_ctrl)] = key_ctrl

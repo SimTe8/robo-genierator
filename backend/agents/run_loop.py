@@ -94,8 +94,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--task-type",
-        choices=["pick_and_lift", "in_hand_rotation"],
+        choices=["pick_and_lift", "obstacle_grasp", "in_hand_rotation", "in_hand_spindle"],
         default="pick_and_lift",
+    )
+    parser.add_argument(
+        "--object-shape",
+        choices=["auto", "box", "cylinder", "sphere"],
+        default="auto",
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--task", type=str, default=None)
@@ -104,30 +109,51 @@ def main() -> None:
     parser.add_argument(
         "--target-rotation",
         type=float,
-        default=60.0,
-        help="Target cumulative yaw rotation in degrees for in_hand_rotation (e.g. 60, 180, 360).",
+        default=45.0,
+        help="Target cumulative yaw rotation in degrees for Allegro rotation (e.g. 45 free, 180/360 spindle).",
+    )
+    parser.add_argument(
+        "--chunk-deg",
+        type=float,
+        default=None,
+        help="Enable checkpointed closed-loop generation with receding-horizon chunk milestones (e.g. 90 for 360 deg).",
     )
     parser.add_argument("--mode", choices=["one_shot", "text_only", "video"], default="video")
-    parser.add_argument("--planner", type=str, default="models/gemini-4-carbon")
-    parser.add_argument("--critic", type=str, default="models/gemini-4-neon")
+    parser.add_argument("--planner", type=str, default="models/gemini-4-neon")
+    parser.add_argument("--critic", type=str, default="models/gemini-4-hydrogen")
+    parser.add_argument(
+        "--dr-episodes",
+        type=int,
+        default=0,
+        help="If > 0 and run succeeds, replay the verified skill across N domain-randomized scenes.",
+    )
     args = parser.parse_args()
 
-    default_prompt = (
-        f"Rotate the multi-colored cube in-hand by at least {args.target_rotation:.0f} degrees "
-        "without dropping it off the palm."
-        if args.task_type == "in_hand_rotation"
-        else "Pick up the object and lift it 15 cm above the table."
-    )
-    robot_id = "wonik_allegro" if args.task_type == "in_hand_rotation" else args.robot
+    if args.task_type in ("in_hand_rotation", "in_hand_spindle"):
+        default_prompt = (
+            f"Rotate the multi-colored cube in-hand by at least {args.target_rotation:.0f} degrees "
+            "without dropping it."
+        )
+        robot_id = "wonik_allegro"
+    elif args.task_type == "obstacle_grasp":
+        default_prompt = (
+            "Pick up the object and lift it at least 12 cm above the table while avoiding any obstacles in the workspace."
+        )
+        robot_id = "franka_emika_panda"
+    else:
+        default_prompt = "Pick up the object and lift it 15 cm above the table."
+        robot_id = args.robot
 
     req = RunRequest(
         task_prompt=args.task or default_prompt,
         task_type=args.task_type,
         robot_id=robot_id,
         scene_seed=args.seed,
+        object_shape=args.object_shape,
         disabled_joints=args.disable,
         max_attempts=args.max_attempts,
         target_rotation_deg=args.target_rotation,
+        chunk_step_deg=args.chunk_deg,
         feedback_mode=args.mode,
         planner_model=args.planner,
         critic_model=args.critic,
@@ -144,7 +170,8 @@ def main() -> None:
 
     def _print_event(ev: IterationEvent) -> None:
         spinner.pause()
-        print(f"\n--- Attempt {ev.attempt_id} ({ev.latency_s:.2f}s) ---")
+        chunk_tag = f"Chunk {ev.chunk_id} | " if ev.chunk_id is not None else ""
+        print(f"\n--- {chunk_tag}Attempt {ev.attempt_id} ({ev.latency_s:.2f}s) ---")
         print(f"Models:       {ev.model_used}")
         print(f"Sim Truth:    sim_success={ev.sim_success} | {ev.telemetry_summary}")
         print(
@@ -170,8 +197,30 @@ def main() -> None:
     print(f"Final Sim Success: {summary.final_sim_success}")
     print(f"Final Decision:    {summary.final_decision}")
     print(f"Total Latency:     {summary.total_latency_s:.2f}s")
+    if summary.stitched_video_path:
+        print(f"Stitched Video:    {summary.stitched_video_path}")
     if summary.exported_trajectory_path:
         print(f"Saved Trajectory:  {summary.exported_trajectory_path}")
+
+    if args.dr_episodes > 0 and summary.final_sim_success and summary.events:
+        from sim.domain_rand import run_domain_randomization
+
+        print(f"\nRunning Domain Randomization Multiplier ({args.dr_episodes} randomized episodes)...")
+        dr = run_domain_randomization(
+            waypoints=summary.events[-1].waypoints,
+            robot_id=req.robot_id,
+            task_type=req.task_type,
+            base_seed=req.scene_seed,
+            object_shape=req.object_shape,
+            disabled_joints=req.disabled_joints,
+            target_rotation_deg=req.target_rotation_deg,
+            num_episodes=args.dr_episodes,
+        )
+        print(
+            f"DR Result: {dr.passed_episodes}/{dr.total_episodes} passed "
+            f"({dr.transfer_rate * 100:.1f}% zero-shot transfer) in {dr.elapsed_s:.2f}s | "
+            f"Exported {len(dr.exported_paths)} verified .npz trajectories!"
+        )
 
 
 if __name__ == "__main__":
