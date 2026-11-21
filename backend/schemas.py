@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -67,3 +67,119 @@ class IterationEvent(BaseModel):
     decision: DecisionType
     reason: str
     latency_s: float
+
+
+# ---------------------------------------------------------------------------
+# Web UI -> Gemini 4 planner hand-off (object + task library; robot is the Allegro hand)
+# ---------------------------------------------------------------------------
+
+
+class TaskParamInfo(BaseModel):
+    key: str
+    label: str
+    unit: str
+    min: float
+    max: float
+    step: float
+    default: float
+
+
+class TaskPresetInfo(BaseModel):
+    id: str
+    name: str
+    skill: str
+    summary: str
+    goal: str
+    fixture: str | None
+    initial_pose: str
+    params: list[TaskParamInfo]
+    prompt_template: str
+    criteria: list[str]
+    robots: list[str]
+
+
+class ObjectTaskInfo(BaseModel):
+    """A task preset as offered for one object (names/params resolved for that object)."""
+
+    task_id: str
+    name: str
+    params: dict[str, float]
+
+
+class ObjectInfo(BaseModel):
+    id: str
+    name: str
+    category: str
+    description: str
+    dims_cm: list[float]
+    mass_kg: float
+    grasp_note: str
+    parts: list[str]
+    articulated: bool
+    thumbnail_url: str
+    tasks: list[ObjectTaskInfo]
+    physics: dict[str, Any] = Field(description="PG-VLM concepts: material, fragility, deformability, transparency, contents, can_contain_liquid, sealed")
+
+
+class RobotInfo(BaseModel):
+    id: str
+    name: str
+    kind: str
+    description: str
+    fingers: list[str]
+    license: str
+
+
+class Catalog(BaseModel):
+    robots: list[RobotInfo]
+    objects: list[ObjectInfo]
+    tasks: list[TaskPresetInfo]
+
+
+class PlannerRequest(BaseModel):
+    """What the UI sends: object + task + the (editable) prompt. No conditions — the planner decides those."""
+
+    robot_id: str = "wonik_allegro"
+    object_id: str
+    task_id: str
+    task_params: dict[str, float] = Field(default_factory=dict)
+    prompt: str = Field(min_length=1)
+
+
+class PlannerBrief(BaseModel):
+    """Everything the Gemini 4 planner receives for a job (saved as outputs/jobs/<job_id>/job.json)."""
+
+    job_id: str
+    created_at: str
+    robot: RobotInfo
+    prompt: str
+    object: ObjectInfo
+    task: TaskPresetInfo
+    task_params: dict[str, float]
+    success_criteria: list[str]
+    default_scene: dict[str, Any] = Field(description="Object/fixture pose of the default scene (planner may randomise).")
+    kinematic_summary: str
+    how_to_build_scene: str
+
+
+class CheckResult(BaseModel):
+    """Simulator ground truth for one attempt (sim/check.py)."""
+
+    success: bool
+    checks: dict[str, bool]
+    metrics: dict[str, float]
+
+
+class JobEvent(BaseModel):
+    """One line of a job's event stream (outputs/jobs/<job_id>/events.jsonl, streamed to the UI over SSE).
+
+    The planner emits these. `iteration` carries the shared IterationEvent when an attempt finishes.
+    """
+
+    job_id: str
+    seq: int
+    kind: Literal["status", "attempt", "done", "error"]
+    message: str
+    iteration: IterationEvent | None = None
+    check: CheckResult | None = None
+    data: dict[str, Any] | None = None

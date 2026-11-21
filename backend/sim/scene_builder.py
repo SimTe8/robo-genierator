@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Callable, Literal
 
 import mujoco
 import numpy as np
@@ -44,6 +44,15 @@ class SceneBundle:
     obj_spec: ObjectSpec
     table_top_z: float
     disabled_joints: list[str] = field(default_factory=list)
+    extras: dict[str, Any] = field(default_factory=dict)  # filled by a `populate` hook (fixtures, task info)
+
+
+# populate(spec, robot_id, table_top_z, table_center_xy, table_half_size) -> (ObjectSpec, extras)
+# Lets the web UI's object/task library add its own object + fixtures instead of the seeded primitive.
+PopulateFn = Callable[
+    [mujoco.MjSpec, "RobotId", float, tuple[float, float], tuple[float, float, float]],
+    tuple["ObjectSpec", dict[str, Any]],
+]
 
 
 def _yaw_to_quat(yaw: float) -> list[float]:
@@ -139,6 +148,16 @@ def _add_table_and_object(
     obj_spec: ObjectSpec,
 ) -> None:
     """Add a clean tabletop surface and the procedural target object to an MjSpec."""
+    _add_table(spec, table_center_xy, table_half_size, table_top_z)
+    _add_object(spec, obj_spec)
+
+
+def _add_table(
+    spec: mujoco.MjSpec,
+    table_center_xy: tuple[float, float],
+    table_half_size: tuple[float, float, float],
+    table_top_z: float,
+) -> None:
     table_body = spec.worldbody.add_body()
     table_body.name = "work_table"
     table_body.pos = [
@@ -153,6 +172,8 @@ def _add_table_and_object(
     table_geom.rgba = [0.32, 0.35, 0.40, 1.0]
     table_geom.friction = [0.8, 0.005, 0.0001]
 
+
+def _add_object(spec: mujoco.MjSpec, obj_spec: ObjectSpec) -> None:
     # Add procedural target object with a freejoint
     obj_body = spec.worldbody.add_body()
     obj_body.name = "target_object"
@@ -213,15 +234,29 @@ def build_scene(
     robot_id: RobotId = "franka_emika_panda",
     scene_seed: int = 42,
     disabled_joints: list[str] | None = None,
+    populate: PopulateFn | None = None,
 ) -> SceneBundle:
-    """Build a MuJoCo model & data with the requested robot and seeded object."""
+    """Build a MuJoCo model & data with the requested robot and seeded object.
+
+    `populate` (optional) replaces the seeded primitive with a custom object + fixtures (see library/scene.py).
+    """
     disabled_joints = list(disabled_joints or [])
+    extras: dict[str, Any] = {}
+
+    def add_workspace(spec, table_top_z, center, half):
+        if populate is None:
+            obj = generate_object_spec(scene_seed, robot_id, table_top_z)
+            _add_table_and_object(spec, center, half, table_top_z, obj)
+            return obj
+        _add_table(spec, center, half, table_top_z)
+        obj, extra = populate(spec, robot_id, table_top_z, center, half)
+        extras.update(extra)
+        return obj
 
     if robot_id == "franka_emika_panda":
         scene_xml = MENAGERIE_DIR / "franka_emika_panda" / "scene.xml"
         spec = mujoco.MjSpec.from_file(str(scene_xml))
         table_top_z = 0.02
-        obj_spec = generate_object_spec(scene_seed, robot_id, table_top_z)
 
         # Add an end-effector site between the Panda fingertips for IK
         hand_body = spec.body("hand")
@@ -232,13 +267,7 @@ def build_scene(
             ee_site.size = [0.008, 0.008, 0.008]
             ee_site.rgba = [0.1, 0.9, 0.1, 0.6]
 
-        _add_table_and_object(
-            spec=spec,
-            table_center_xy=(0.52, 0.0),
-            table_half_size=(0.28, 0.35, 0.01),
-            table_top_z=table_top_z,
-            obj_spec=obj_spec,
-        )
+        obj_spec = add_workspace(spec, table_top_z, (0.52, 0.0), (0.28, 0.35, 0.01))
         _add_cameras(spec, robot_id)
 
         model = spec.compile()
@@ -294,15 +323,7 @@ def build_scene(
             weld.solref = [0.01, 1.0]
 
         table_top_z = -0.08
-        obj_spec = generate_object_spec(scene_seed, robot_id, table_top_z)
-
-        _add_table_and_object(
-            spec=spec,
-            table_center_xy=(0.0, 0.0),
-            table_half_size=(0.20, 0.20, 0.01),
-            table_top_z=table_top_z,
-            obj_spec=obj_spec,
-        )
+        obj_spec = add_workspace(spec, table_top_z, (0.0, 0.0), (0.20, 0.20, 0.01))
         _add_cameras(spec, robot_id)
 
         model = spec.compile()
@@ -335,6 +356,7 @@ def build_scene(
         obj_spec=obj_spec,
         table_top_z=table_top_z,
         disabled_joints=disabled_joints,
+        extras=extras,
     )
 
 
