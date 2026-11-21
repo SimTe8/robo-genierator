@@ -64,6 +64,7 @@ class RunRequest(BaseModel):
     library_task_params: dict[str, float] = Field(default_factory=dict)
     library_clutter: list[str] = Field(default_factory=list)
     library_layout_seed: int | None = None
+    is_custom_prompt: bool = False
     disabled_joints: list[str] = Field(
         default_factory=list,
         description="Joint or finger names to lock/disable via live fault injection.",

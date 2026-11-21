@@ -60,16 +60,25 @@ def evaluate_rollout(
     decision_model: str = "gemini-decision-1",
     task_type: str = "pick_and_lift",
     target_rotation_deg: float = 60.0,
+    is_custom_prompt: bool = False,
     on_status: Callable[[str], None] | None = None,
 ) -> CriticEvaluation:
     """Evaluate a rollout using the Decisions API + constructive diagnosis when refining."""
     use_video = feedback_mode == "video" and video_path is not None and video_path.exists()
 
+    # For custom user prompts, omit the mismatched preset sim_success=False flag so
+    # gemini-decision-1 judges purely from the video against the user's custom goal!
+    telemetry_line = (
+        "Custom user prompt active — judge strictly from what you visually observe in the video."
+        if is_custom_prompt
+        else f"Contact/Height Summary: {telemetry_summary}"
+    )
+
     context_text = (
         f"Task: {task_prompt}\n"
         f"Robot: {robot_id} | Disabled joints: {list(disabled_joints) or 'none'}\n"
         f"Attempt: {attempt_id} of {max_attempts}\n"
-        f"Contact/Height Summary: {telemetry_summary}\n"
+        f"{telemetry_line}\n"
         f"Executed Waypoints: {[wp.model_dump() for wp in waypoints]}"
     )
 

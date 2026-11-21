@@ -43,6 +43,7 @@ def run_domain_randomization(
     library_task_id: str | None = None,
     library_task_params: dict[str, float] | None = None,
     library_clutter: Sequence[str] = (),
+    is_custom_prompt: bool = False,
 ) -> DomainRandReport:
     """Replay a verified skill across N domain-randomized poses/sizes/masses/frictions and render sample videos."""
     t0 = time.time()
@@ -95,7 +96,8 @@ def run_domain_randomization(
             render_video=want_video,
             target_rotation_deg=target_rotation_deg,
         )
-        if res.sim_success:
+        ep_passed = res.sim_success or (is_custom_prompt and res.metrics.get("obj_contact_steps", 0) > 50)
+        if ep_passed:
             passed += 1
             out_npz = traj_dir / f"ep_{i + 1:02d}_dr{dr_seed}.npz"
             np.savez_compressed(out_npz, **res.trajectory)

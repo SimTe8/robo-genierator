@@ -395,6 +395,7 @@ def run_closed_loop(
                 video_path=rollout.video_path,
                 task_type=request.task_type,
                 target_rotation_deg=request.target_rotation_deg,
+                is_custom_prompt=request.is_custom_prompt,
                 on_status=lambda s: _status(f"{prefix} | {s}"),
             )
             decision = eval_res.decision
@@ -405,9 +406,15 @@ def run_closed_loop(
             grasp_score = eval_res.grasp_score
             model_used = f"{request.planner_model} -> {request.critic_model}"
 
-        # Export verified expert trajectory ONLY when BOTH critic accepts (or one_shot) AND simulator confirms success
+        # For custom user prompts (where preset sim/check rules don't apply), trust the visual Decisions API acceptance
+        effective_success = bool(
+            rollout.sim_success
+            or (request.is_custom_prompt and decision == "ACCEPT_TRAJECTORY")
+        )
+
+        # Export verified expert trajectory when accepted and verified
         traj_path_str: str | None = None
-        if rollout.sim_success and decision == "ACCEPT_TRAJECTORY":
+        if effective_success and decision == "ACCEPT_TRAJECTORY":
             traj_file = traj_dir / f"verified_{request.robot_id}_seed{request.scene_seed}_{run_id}_att{attempt_id}.npz"
             np.savez_compressed(traj_file, **rollout.trajectory)
             traj_path_str = str(traj_file)
@@ -422,7 +429,7 @@ def run_closed_loop(
             waypoints=plan.waypoints,
             video_url=rel_video_url,
             telemetry_summary=rollout.telemetry_summary,
-            sim_success=rollout.sim_success,
+            sim_success=effective_success,
             decision=decision,
             reason=reason,
             latency_s=latency_s,

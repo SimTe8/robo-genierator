@@ -137,9 +137,12 @@ def main() -> None:
     import json as _json
 
     lib_params = _json.loads(args.library_params_json) if args.library_params_json else {}
+    is_custom_prompt = False
     if args.library_object and args.library_task:
         from library.catalog import render_prompt
         default_prompt = render_prompt(args.library_object, args.library_task, lib_params)
+        if args.task and args.task.strip() != default_prompt.strip():
+            is_custom_prompt = True
         robot_id = args.robot
     elif args.task_type in ("in_hand_rotation", "in_hand_spindle"):
         default_prompt = (
@@ -167,6 +170,7 @@ def main() -> None:
         library_task_params=lib_params,
         library_clutter=args.clutter,
         library_layout_seed=args.layout_seed,
+        is_custom_prompt=is_custom_prompt,
         disabled_joints=args.disable,
         max_attempts=args.max_attempts,
         target_rotation_deg=args.target_rotation,
@@ -236,6 +240,7 @@ def main() -> None:
             library_task_id=req.library_task_id,
             library_task_params=req.library_task_params,
             library_clutter=req.library_clutter,
+            is_custom_prompt=req.is_custom_prompt,
         )
         print(
             f"DR Result: {dr.passed_episodes}/{dr.total_episodes} passed "
