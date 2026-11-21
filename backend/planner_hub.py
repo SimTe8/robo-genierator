@@ -344,6 +344,8 @@ def _run_via_cli_bridge(brief: PlannerBrief, job_dir: Path, emit: Emit, script_p
     saved_trajectory: str | None = None
     final_sim_success: bool | None = None
     final_decision: str | None = None
+    dr_result_text: str | None = None
+    dr_video_urls: list[str] = []
 
     def flush_attempt() -> None:
         nonlocal cur
@@ -452,6 +454,11 @@ def _run_via_cli_bridge(brief: PlannerBrief, job_dir: Path, emit: Emit, script_p
                 stitched_video_url = _mirror_media(stripped.split(":", 1)[1].strip(), planner_root, job_dir, brief.job_id)
             elif stripped.startswith("Saved Trajectory:"):
                 saved_trajectory = stripped.split(":", 1)[1].strip()
+            elif stripped.startswith("DR Result:"):
+                dr_result_text = stripped.split(":", 1)[1].strip()
+            elif stripped.startswith("DR Videos:"):
+                raw_vids = [v.strip() for v in stripped.split(":", 1)[1].split(",") if v.strip()]
+                dr_video_urls = [_mirror_media(v, planner_root, job_dir, brief.job_id) for v in raw_vids]
 
     flush_attempt()
     rc = proc.wait()
@@ -464,6 +471,8 @@ def _run_via_cli_bridge(brief: PlannerBrief, job_dir: Path, emit: Emit, script_p
         "final_decision": final_decision,
         "stitched_video_url": stitched_video_url,
         "saved_trajectory": saved_trajectory,
+        "dr_result": dr_result_text,
+        "dr_video_urls": dr_video_urls,
     }
     if rc == 0:
         verdict = (

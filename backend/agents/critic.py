@@ -110,13 +110,15 @@ def evaluate_rollout(
         }
     else:
         verdict_instructions = (
-            f"Judge whether the robot successfully completed the manipulation task ('{task_prompt}') "
+            f"Judge whether the robot VISUALLY completed the stated user task ('{task_prompt}') in the video "
             "cleanly without dropping, crashing into the table, or hitting any red obstacle/overhang shelf. "
+            "Note: if the user wrote a custom prompt (e.g., placing one object onto another), judge by what you SEE "
+            "in the video against the user's stated Task prompt even if a generic preset telemetry flag says False. "
             f"{give_up_note}"
         )
         verdict_criteria = {
-            "ACCEPT_TRAJECTORY": "The robot cleanly completed the stated task goal (e.g., lifted/placed object, opened drawer, pressed button, turned valve/dial, or inserted/turned key) and simulator checks confirm success.",
-            "REFINE_GRASP": "The attempt failed (missed handle/object/button, under-turned/under-pulled, hit obstacle, dropped, or collided with table), but adjusting waypoints/orientation/gripper could fix it.",
+            "ACCEPT_TRAJECTORY": "The video shows the robot cleanly accomplishing the stated user task goal without harsh collisions.",
+            "REFINE_GRASP": "The attempt failed to accomplish the stated user task (missed, dropped, hit obstacle, or collided with table), and adjusting waypoints/orientation/gripper could fix it.",
             "GIVE_UP": "The task appears physically unreachable/impossible under the current constraints, or attempts are exhausted.",
         }
         failure_criteria = {

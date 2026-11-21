@@ -219,7 +219,7 @@ def main() -> None:
     if summary.exported_trajectory_path:
         print(f"Saved Trajectory:  {summary.exported_trajectory_path}")
 
-    if args.dr_episodes > 0 and summary.final_sim_success and summary.events:
+    if args.dr_episodes > 0 and (summary.final_sim_success or summary.final_decision == "ACCEPT_TRAJECTORY") and summary.events:
         from sim.domain_rand import run_domain_randomization
 
         print(f"\nRunning Domain Randomization Multiplier ({args.dr_episodes} randomized episodes)...")
@@ -232,12 +232,18 @@ def main() -> None:
             disabled_joints=req.disabled_joints,
             target_rotation_deg=req.target_rotation_deg,
             num_episodes=args.dr_episodes,
+            library_object_id=req.library_object_id,
+            library_task_id=req.library_task_id,
+            library_task_params=req.library_task_params,
+            library_clutter=req.library_clutter,
         )
         print(
             f"DR Result: {dr.passed_episodes}/{dr.total_episodes} passed "
             f"({dr.transfer_rate * 100:.1f}% zero-shot transfer) in {dr.elapsed_s:.2f}s | "
-            f"Exported {len(dr.exported_paths)} verified .npz trajectories!"
+            f"Exported {len(dr.exported_paths)} verified .npz trajectories! ({dr.output_folder})"
         )
+        if dr.sample_video_paths:
+            print(f"DR Videos: {', '.join(dr.sample_video_paths)}")
 
 
 if __name__ == "__main__":

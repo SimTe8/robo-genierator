@@ -70,7 +70,12 @@ export function PlannerPanel({
   const nonTerminalEvents = events.filter((e) => e.kind !== 'terminal');
   const latestStatus = [...events].reverse().find((e) => e.kind === 'status');
   const drResultLine =
-    [...terminalLines].reverse().find((l) => l.text.trim().startsWith('DR Result:'))?.text.trim() ?? null;
+    (typeof final?.data?.dr_result === 'string' && final.data.dr_result) ||
+    [...terminalLines].reverse().find((l) => l.text.trim().startsWith('DR Result:'))?.text.trim().replace(/^DR Result:\s*/, '') ||
+    null;
+  const drVideoUrls: string[] = Array.isArray(final?.data?.dr_video_urls)
+    ? (final.data.dr_video_urls as string[]).filter((u) => typeof u === 'string' && u.length > 0)
+    : [];
   const stitchedVideoUrl =
     typeof final?.data?.stitched_video_url === 'string' && final.data.stitched_video_url
       ? final.data.stitched_video_url
@@ -212,14 +217,42 @@ export function PlannerPanel({
         </div>
       )}
 
-      {/* Domain Randomization Multiplier Result Banner */}
+      {/* Domain Randomization Dataset Multiplication Showcase (Badge + Sample Randomized Videos) */}
       {drResultLine && (
-        <div className="mb-4 flex items-center gap-2.5 rounded-2xl border border-gemini-blue/40 bg-gemini-blue/10 px-4 py-3 text-xs text-gemini-sky">
-          <Sparkles className="size-4 shrink-0" />
-          <div>
-            <span className="font-display font-semibold text-fg">Domain Randomization Dataset Multiplication: </span>
-            <span className="font-mono text-ok">{drResultLine.replace(/^DR Result:\s*/, '')}</span>
+        <div className="mb-4 overflow-hidden rounded-2xl border border-ok/45 bg-gradient-to-br from-ok/10 via-gemini-blue/8 to-panel-2/70">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ok/25 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="size-4 text-ok" />
+              <span className="font-display text-sm font-semibold text-fg">
+                Randomized Expert Dataset Generated
+              </span>
+            </div>
+            <span className="rounded-full border border-ok/40 bg-ok/15 px-3 py-0.5 font-mono text-xs font-semibold text-ok">
+              {drResultLine}
+            </span>
           </div>
+          {drVideoUrls.length > 0 && (
+            <div className="grid gap-3 p-3.5 sm:grid-cols-3">
+              {drVideoUrls.map((url, i) => (
+                <div key={url} className="overflow-hidden rounded-xl border border-line/80 bg-black">
+                  <div className="relative">
+                    <video
+                      src={url}
+                      controls
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      className="aspect-[8/3] w-full bg-black object-cover"
+                    />
+                    <span className="pointer-events-none absolute left-2 top-2 rounded-full border border-ok/40 bg-ink/80 px-2 py-0.5 font-mono text-[10px] font-medium text-ok backdrop-blur-sm">
+                      Randomized Rollout #{i + 1}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
