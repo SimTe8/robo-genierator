@@ -86,8 +86,9 @@ COORDINATE CONVENTIONS:
 - `orientation_rpy = [roll, pitch, yaw]` in RADIANS (intrinsic/extrinsic XYZ Euler).
   - For `franka_emika_panda`:
     - `[3.14159, 0.0, 1.5708]` points the parallel-jaw gripper straight DOWN (`-Z`).
-    - `[3.14159, -0.45, 0.0]` tilts the gripper ~25° forward along `+X` with horizontal jaws (ideal for sliding underneath an overhang shelf from the open `-X` front side: e.g. `pre_grasp` at `[-0.14, 0.0, 0.08]`, `grasp` at `[0.0, 0.0, 0.0]`, `close` at `[0.0, 0.0, 0.0]`, `lift` pulling back & up to `[-0.16, 0.0, 0.16]`).
-    - Adjusting `pitch` (`-0.6` to `+0.4`) or `roll` (`3.14 +/- 0.5`) tilts the approach angle around locked joints (`joint4`/`joint2`) or workspace obstacles!
+    - `[3.14159, -0.40, -1.20]` or `[3.14159, -0.40, 0.0]` tilts the gripper ~23° forward along `+X` to slide underneath an overhang shelf from the open `-X` front side (e.g. `pre_grasp` at `[-0.08, 0.0, 0.10]`, `grasp` at `[0.0, 0.0, 0.0]`, `close` at `[0.0, 0.0, 0.0]`, `lift` pulling back & up to `[-0.15, 0.0, 0.16]`).
+    - IMPORTANT: Keep Panda `pitch` in `[-0.50, +0.40]` — pitching steeper than `-0.55` drives the wrist/hand into the tabletop! Always keep `grasp` `dz >= 0.0`.
+    - Adjusting `yaw` rotates the parallel gripper jaws around Z to align with box edges (avoid clamping across wide box diagonals!).
   - For `wonik_allegro`: `[0.0, 1.5708, 0.0]` points the palm downward/forward over the object. Use `finger_targets` (`{"thumb": ..., "index": ..., "middle": ..., "ring": ...}`) to adapt around disabled fingers!
 - Avoid colliding with the table (`table_top_z`). Keep `grasp` `dz` safely above the table surface.
 - When given prior attempt feedback from the Visual Critic, apply the suggested spatial corrections directly to fix the physical failure mode."""

@@ -205,6 +205,7 @@ def evaluate_rollout(
             "if a red overhang shelf/obstacle blocked the arm, explicitly state WHICH direction is blocked—e.g. directly above and behind/+X—and "
             "WHICH side is open—e.g. approach from -X front/side low underneath the shelf, pull out along -X before lifting! "
             "Also note alignment, finger gap, joint reachability, speed/force, or slip direction). "
+            "CRITICAL: Never recommend Panda pitch steeper than -0.50 rad (steeper tilts crash the wrist into the table — keep pitch in [-0.48, -0.30] and adjust pre_grasp dx/dz and jaw yaw instead!). "
             "Give concrete numeric adjustments (dx, dy, dz in meters; roll/pitch/yaw in radians; gripper_target; duration_s) "
             "for each of the 4 waypoints (`pre_grasp`, `grasp`, `close`, `lift`) so the Planner avoids the obstacle/fault and succeeds."
         )

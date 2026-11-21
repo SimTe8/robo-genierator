@@ -84,13 +84,14 @@ def _run_one_job(job: BenchJob) -> dict:
                 object_shape=req.object_shape,
                 disabled_joints=req.disabled_joints,
                 target_rotation_deg=req.target_rotation_deg,
-                num_episodes=10,
+                num_episodes=20,
             )
             dr_info = {
                 "passed": dr.passed_episodes,
                 "total": dr.total_episodes,
                 "transfer_rate": dr.transfer_rate,
                 "elapsed_s": dr.elapsed_s,
+                "exported_count": len(dr.exported_paths),
             }
 
         return {
@@ -456,13 +457,65 @@ def _save_outputs(report: dict) -> None:
             pass
 
 
+def build_post_fix_jobs() -> list[BenchJob]:
+    """Targeted post-failure-fix verification + 20-episode DR statistics per verified skill."""
+    jobs: list[BenchJob] = []
+    # Uses Carbon + Hydrogen (fastest duo from initial study: 55s/iter) + post-fix pitch safety guard
+    for seed in (101, 102, 103, 104):
+        for mode in ("one_shot", "text_only", "video"):
+            jobs.append(
+                BenchJob(
+                    suite="ablation",
+                    label=f"postfix_obstacle_grasp_seed{seed}_{mode}",
+                    request_dict=RunRequest(
+                        task_prompt="Pick up the object and lift it at least 12 cm above the table while avoiding any workspace obstacles.",
+                        task_type="obstacle_grasp",
+                        robot_id="franka_emika_panda",
+                        scene_seed=seed,
+                        max_attempts=4,
+                        feedback_mode=mode,
+                        planner_model="models/gemini-4-carbon",
+                        critic_model="models/gemini-4-hydrogen",
+                    ).model_dump(),
+                    run_dr=True,
+                )
+            )
+
+    for seed in (301, 302):
+        for mode in ("one_shot", "video"):
+            jobs.append(
+                BenchJob(
+                    suite="ablation",
+                    label=f"postfix_allegro_spindle90_seed{seed}_{mode}",
+                    request_dict=RunRequest(
+                        task_prompt="Rotate the multi-colored cube on the spindle in-hand by at least 90 degrees using coordinated finger gaits.",
+                        task_type="in_hand_spindle",
+                        robot_id="wonik_allegro",
+                        scene_seed=seed,
+                        max_attempts=3,
+                        target_rotation_deg=90.0,
+                        feedback_mode=mode,
+                        planner_model="models/gemini-4-neon",
+                        critic_model="models/gemini-4-hydrogen",
+                    ).model_dump(),
+                    run_dr=True,
+                )
+            )
+    return jobs
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Phase 4 § 6 Benchmark Suite.")
     parser.add_argument("--workers", type=int, default=4, help="Parallel worker processes.")
     parser.add_argument("--quick", action="store_true", help="Smaller fast suite (~3-5 min).")
+    parser.add_argument(
+        "--post-fix",
+        action="store_true",
+        help="Run post-failure-fix verification with 20-episode DR randomization on every verified skill.",
+    )
     args = parser.parse_args()
 
-    jobs = build_jobs(quick=args.quick)
+    jobs = build_post_fix_jobs() if args.post_fix else build_jobs(quick=args.quick)
     print(f"Launching § 6 Benchmark: {len(jobs)} episodes across {args.workers} parallel processes...")
     t0 = time.time()
     records: list[dict] = []
