@@ -17,3 +17,7 @@ assets/mujoco_menagerie/
 ENVIRONMENT_STATUS.txt
 .DS_Store
 *:Zone.Identifier
+
+# Wuji hand model (MIT, wuji-technology/wuji-hand-description) — download, never commit
+assets/wuji-hand-description
+assets/wuji-hand-description/

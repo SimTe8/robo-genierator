@@ -1,122 +1,319 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { Bot, ChevronRight, Hand } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { api } from './api';
+import { AssetForge } from './components/AssetForge';
+import { GeminiSparkle, HackathonBadge, HackathonFooter, HackathonModal } from './components/GeminiBrand';
+import { ObjectLibrary } from './components/ObjectLibrary';
+import { PlannerControls } from './components/PlannerControls';
+import { PlannerPanel } from './components/PlannerPanel';
+import { ScenePreview } from './components/ScenePreview';
+import { TaskPicker } from './components/TaskPicker';
+import { OptionCard, Panel, Pill } from './components/ui';
+import { DEFAULT_PLANNER_SETTINGS } from './types';
+import type {
+  Catalog,
+  Health,
+  JobEvent,
+  ObjectInfo,
+  PlannerBrief,
+  PlannerSettings,
+  SceneResponse,
+  TaskPresetInfo,
+} from './types';
 
-function App() {
-  const [count, setCount] = useState(0)
+export default function App() {
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
+  const [bootError, setBootError] = useState<string | null>(null);
+  const [hackathonOpen, setHackathonOpen] = useState(false);
+
+  const [robotId, setRobotId] = useState('wonik_allegro');
+  const [objectId, setObjectId] = useState('key');
+  const [taskId, setTaskId] = useState('unlock_with_key');
+  const [params, setParams] = useState<Record<string, number>>({});
+  const [promptDraft, setPromptDraft] = useState<string | null>(null); // null = use the template prompt
+  const [settings, setSettings] = useState<PlannerSettings>(DEFAULT_PLANNER_SETTINGS);
+
+  const [scene, setScene] = useState<SceneResponse | null>(null);
+  const [sceneLoading, setSceneLoading] = useState(false);
+  const [sceneError, setSceneError] = useState<string | null>(null);
+
+  const [brief, setBrief] = useState<PlannerBrief | null>(null);
+  const [events, setEvents] = useState<JobEvent[]>([]);
+  const [sending, setSending] = useState(false);
+  const [live, setLive] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const unsubscribe = useRef<(() => void) | null>(null);
+
+  const reloadCatalog = (selectId?: string) =>
+    api.catalog().then((c) => {
+      setCatalog(c);
+      const o = selectId ? c.objects.find((x) => x.id === selectId) : undefined;
+      if (o) {
+        setObjectId(o.id);
+        setTaskId(o.tasks[0].task_id);
+        setParams({});
+        setPromptDraft(null);
+      }
+    });
+
+  useEffect(() => {
+    Promise.all([api.catalog(), api.health()])
+      .then(([c, h]) => {
+        setCatalog(c);
+        setHealth(h);
+      })
+      .catch(() =>
+        setBootError('Backend not reachable. Start it with: uvicorn app:app --app-dir backend --port 8000'),
+      );
+  }, []);
+
+  const tasksById = useMemo(
+    () => Object.fromEntries((catalog?.tasks ?? []).map((t) => [t.id, t])) as Record<string, TaskPresetInfo>,
+    [catalog],
+  );
+  const object = catalog?.objects.find((o) => o.id === objectId) ?? null;
+  const robot = catalog?.robots.find((r) => r.id === robotId) ?? null;
+  const activeTask = tasksById[taskId] ?? null;
+  const allowed = (id: string, rid = robotId) => tasksById[id]?.robots.includes(rid) ?? true;
+
+  // Re-render the default scene + template prompt whenever object / task / params change.
+  const sceneKey = JSON.stringify([robotId, objectId, taskId, params]);
+  useEffect(() => {
+    if (!catalog) return;
+    setSceneLoading(true);
+    const t = setTimeout(() => {
+      api
+        .scene(robotId, objectId, taskId, params)
+        .then((s) => {
+          setScene(s);
+          setSceneError(null);
+        })
+        .catch((e: Error) => setSceneError(e.message))
+        .finally(() => setSceneLoading(false));
+    }, 200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalog, sceneKey]);
+
+  const pickObject = (o: ObjectInfo) => {
+    setObjectId(o.id);
+    const keep = o.tasks.some((t) => t.task_id === taskId) && allowed(taskId);
+    if (!keep) setTaskId((o.tasks.find((t) => allowed(t.task_id)) ?? o.tasks[0]).task_id);
+    setParams({});
+    setPromptDraft(null);
+  };
+
+  const pickRobot = (rid: string) => {
+    setRobotId(rid);
+    setSettings((s) => ({ ...s, disabled_joints: [] }));
+    if (object && !allowed(taskId, rid)) {
+      setTaskId((object.tasks.find((t) => allowed(t.task_id, rid)) ?? object.tasks[0]).task_id);
+      setParams({});
+      setPromptDraft(null);
+    }
+  };
+
+  const pickTask = (id: string) => {
+    setTaskId(id);
+    setParams({});
+    setPromptDraft(null);
+  };
+
+  const prompt = promptDraft ?? scene?.prompt ?? '';
+
+  const send = async () => {
+    unsubscribe.current?.();
+    setSending(true);
+    setSendError(null);
+    setEvents([]);
+    setBrief(null);
+    setTerminalOpen(true); // Automatically open the live terminal when generation begins
+    try {
+      const b = await api.sendToPlanner({
+        robot_id: robotId,
+        object_id: objectId,
+        task_id: taskId,
+        task_params: params,
+        prompt,
+        settings,
+      });
+      setBrief(b);
+      setLive(true);
+      unsubscribe.current = api.streamJob(
+        b.job_id,
+        (ev) => setEvents((prev) => [...prev, ev]),
+        () => setLive(false),
+      );
+      setTimeout(() => {
+        document.getElementById('planner')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 60);
+    } catch (e) {
+      setSendError((e as Error).message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const stopRun = async () => {
+    if (!brief) return;
+    try {
+      await api.stopJob(brief.job_id);
+    } catch {
+      // ignore if already finished
+    }
+  };
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="min-h-screen">
+      {/* Sticky Gemini Studio top bar */}
+      <header className="sticky top-0 z-30 border-b border-line/70 bg-ink/80 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <div className="flex items-center gap-3">
+            <div className="grid size-9 place-items-center rounded-2xl border border-gemini-blue/35 bg-gradient-to-br from-gemini-blue/20 via-panel to-gemini-violet/20 shadow-[0_0_24px_-6px_rgba(66,133,244,0.75)]">
+              <GeminiSparkle className="size-5" spinning={live || sending} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="font-display text-lg font-bold tracking-tight">
+                  <span className="text-fg">Robo </span>
+                  <span className="gemini-text">Genierator</span>
+                </h1>
+                <span className="hidden rounded-full border border-gemini-blue/30 bg-gemini-blue/10 px-2 py-0.5 text-[10px] font-medium text-gemini-sky sm:inline">
+                  Gemini 4 Studio
+                </span>
+              </div>
+              <p className="text-xs text-muted">
+                Zero-shot cross-embodiment trajectory synthesis &amp; visual self-correction
+              </p>
+            </div>
+          </div>
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+          <div className="flex flex-wrap items-center gap-2">
+            <Pill tone={health ? 'ok' : 'muted'}>MuJoCo {health?.mujoco ?? '…'}</Pill>
+            <Pill tone={health?.planner ? 'ok' : 'warn'} pulse={live}>
+              Planner: {health?.planner ?? 'standby'}
+            </Pill>
+            <HackathonBadge onOpen={() => setHackathonOpen(true)} />
+          </div>
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+        {/* Signature Gemini 4 NYC electric-blue horizon line */}
+        <div className="gemini-horizon h-[1.5px] w-full" />
+      </header>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+      <main className="mx-auto max-w-[1480px] px-4 pb-16 pt-5 sm:px-6">
+        {/* Live selection breadcrumb strip */}
+        {catalog && object && robot && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-line/70 bg-panel/60 px-4 py-2 text-xs backdrop-blur-sm">
+            <div className="flex flex-wrap items-center gap-1.5 text-muted">
+              <span className="text-[11px] font-medium text-faint">Workspace</span>
+              <ChevronRight className="size-3.5 text-faint" />
+              <span className="font-medium text-fg">{robot.name}</span>
+              <ChevronRight className="size-3.5 text-faint" />
+              <span className="font-medium text-fg">{object.name}</span>
+              {activeTask && (
+                <>
+                  <ChevronRight className="size-3.5 text-faint" />
+                  <span className="font-medium text-gemini-sky">{activeTask.name}</span>
+                </>
+              )}
+            </div>
+            {(brief || live) && (
+              <a
+                href="#planner"
+                className="inline-flex items-center gap-1.5 rounded-full border border-gemini-blue/35 bg-gemini-blue/12 px-3 py-0.5 text-[11px] font-medium text-gemini-sky transition hover:bg-gemini-blue/20"
+              >
+                <GeminiSparkle className="size-3" spinning={live} />
+                {live ? 'Planner running · jump to terminal' : 'View latest planner run'}
+              </a>
+            )}
+          </div>
+        )}
+
+        {bootError && (
+          <div className="rounded-3xl border border-bad/30 bg-bad/10 p-5 text-sm text-bad">
+            <p className="font-display font-semibold">Backend connection required</p>
+            <p className="mt-1 font-mono text-xs text-bad/90">{bootError}</p>
+          </div>
+        )}
+
+        {catalog && object && robot && (
+          <>
+            <div className="grid gap-5 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+              <div className="flex min-w-0 flex-col gap-5">
+                <Panel
+                  title="Embodiment"
+                  step="1"
+                  right={
+                    <span className="rounded-full border border-line bg-panel-2/80 px-2.5 py-0.5 text-[10px] text-faint">
+                      {robot.license}
+                    </span>
+                  }
+                >
+                  <div className="grid gap-2.5 sm:grid-cols-3">
+                    {catalog.robots.map((r) => (
+                      <OptionCard
+                        key={r.id}
+                        selected={r.id === robotId}
+                        onClick={() => pickRobot(r.id)}
+                        icon={r.id === 'franka_emika_panda' ? <Bot className="size-4" /> : <Hand className="size-4" />}
+                        title={r.name}
+                        subtitle={r.kind}
+                      />
+                    ))}
+                  </div>
+                  <p className="mt-3 text-xs leading-relaxed text-muted">{robot.description}</p>
+                </Panel>
+
+                <ObjectLibrary objects={catalog.objects} selectedId={objectId} onSelect={pickObject} />
+                <AssetForge onSaved={(id) => reloadCatalog(id)} />
+              </div>
+
+              <div className="flex min-w-0 flex-col gap-5">
+                <ScenePreview scene={scene} loading={sceneLoading} error={sceneError} robotName={robot.name} />
+                <PlannerControls robotId={robotId} settings={settings} onChange={setSettings} />
+                <TaskPicker
+                  robotId={robotId}
+                  robotName={robot.name}
+                  object={object}
+                  tasks={tasksById}
+                  taskId={taskId}
+                  params={params}
+                  prompt={prompt}
+                  promptEdited={promptDraft !== null}
+                  canSend={!!scene && !sceneLoading && prompt.trim().length > 0}
+                  sending={sending || live}
+                  onPickTask={pickTask}
+                  onParam={(k, v) => {
+                    setParams((p) => ({ ...p, [k]: v }));
+                    setPromptDraft(null);
+                  }}
+                  onPrompt={setPromptDraft}
+                  onResetPrompt={() => setPromptDraft(null)}
+                  onSend={send}
+                />
+              </div>
+            </div>
+
+            <div id="planner" className="mt-5 scroll-mt-20">
+              <PlannerPanel
+                brief={brief}
+                events={events}
+                live={live}
+                error={sendError}
+                terminalOpen={terminalOpen}
+                onToggleTerminal={() => setTerminalOpen((v) => !v)}
+                onStop={stopRun}
+              />
+            </div>
+          </>
+        )}
+
+        <HackathonFooter onOpenModal={() => setHackathonOpen(true)} />
+      </main>
+
+      <HackathonModal open={hackathonOpen} onClose={() => setHackathonOpen(false)} />
+    </div>
+  );
 }
-
-export default App
