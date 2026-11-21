@@ -15,8 +15,14 @@ const post = (url: string, body: unknown) =>
 export const api = {
   health: () => fetch('/api/health').then((r) => json<Health>(r)),
   catalog: () => fetch('/api/catalog').then((r) => json<Catalog>(r)),
-  scene: (robot_id: string, object_id: string, task_id: string, task_params: Record<string, number>) =>
-    post('/api/scene', { robot_id, object_id, task_id, task_params }).then((r) => json<SceneResponse>(r)),
+  scene: (
+    robot_id: string,
+    object_id: string,
+    task_id: string,
+    task_params: Record<string, number>,
+    clutter: string[] = [],
+    layout_seed: number | null = null,
+  ) => post('/api/scene', { robot_id, object_id, task_id, task_params, clutter, layout_seed }).then((r) => json<SceneResponse>(r)),
   sendToPlanner: (req: PlannerRequest) => post('/api/planner/jobs', req).then((r) => json<PlannerBrief>(r)),
   stopJob: (jobId: string) => post(`/api/planner/jobs/${jobId}/stop`, {}).then((r) => json<{ stopped: boolean }>(r)),
   assetsStatus: () => fetch('/api/assets/status').then((r) => json<AssetsStatus>(r)),

@@ -88,18 +88,24 @@ class SceneQuery(BaseModel):
     object_id: str
     task_id: str
     task_params: dict[str, float] = Field(default_factory=dict)
+    clutter: list[str] = Field(default_factory=list, max_length=5)
+    layout_seed: int | None = Field(default=None, ge=0, le=2**31 - 1)
 
 
 @app.post("/api/scene")
 async def scene(q: SceneQuery) -> dict:
     """Default scene for (object, task): preview still + numbers + the template prompt."""
-    problem = check_combo(q.robot_id, q.object_id, q.task_id)
+    problem = check_combo(q.robot_id, q.object_id, q.task_id, q.clutter)
     if problem:
         raise HTTPException(422, problem)
     key = hashlib.sha1(json.dumps(q.model_dump(), sort_keys=True).encode()).hexdigest()[:16]
     out = PREVIEW_DIR / f"{key}.png"
-    info = await _in_pool(render_preview, q.robot_id, q.object_id, q.task_id, q.task_params, str(out))
-    return {"scene": info, "preview_url": f"/outputs/previews/{out.name}", "prompt": render_prompt(q.object_id, q.task_id, q.task_params)}
+    try:
+        info = await _in_pool(render_preview, q.robot_id, q.object_id, q.task_id, q.task_params, str(out), q.clutter, q.layout_seed)
+    except ValueError as e:  # e.g. not enough free table space for the extra objects
+        raise HTTPException(422, str(e)) from e
+    return {"scene": info, "preview_url": f"/outputs/previews/{out.name}",
+            "prompt": render_prompt(q.object_id, q.task_id, q.task_params, q.clutter)}
 
 
 @app.post("/api/planner/jobs", response_model=PlannerBrief)

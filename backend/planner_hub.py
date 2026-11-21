@@ -47,7 +47,8 @@ JOBS_DIR = OUTPUTS_DIR / "jobs"
 HOW_TO_BUILD = (
     "from library.scene import build_task_scene; "
     "bundle = build_task_scene(object_id, task_id, task_params, robot_id=robot_id, object_xy=(x, y), object_yaw_deg=yaw, "
-    "size_scale=s, mass_scale=m, friction=f, disabled_joints=[...]). All conditions are optional; "
+    "size_scale=s, mass_scale=m, friction=f, disabled_joints=[...], clutter=brief.clutter, "
+    "layout_seed=brief.layout_seed). All conditions are optional; "
     "defaults reproduce default_scene. Score with sim.check.snapshot/evaluate."
 )
 
@@ -128,7 +129,7 @@ def planner_status() -> dict[str, str | bool | None]:
 
 
 def make_brief(req: PlannerRequest) -> PlannerBrief:
-    problem = check_combo(req.robot_id, req.object_id, req.task_id)
+    problem = check_combo(req.robot_id, req.object_id, req.task_id, req.clutter)
     if problem:
         raise SelectionError(problem)
     obj, task = OBJECTS_BY_ID[req.object_id], TASKS_BY_ID[req.task_id]
@@ -137,7 +138,11 @@ def make_brief(req: PlannerRequest) -> PlannerBrief:
         if not p.min <= params[p.key] <= p.max:
             raise SelectionError(f"{p.label} must be between {p.min:g} and {p.max:g} {p.unit}.")
 
-    bundle = build_task_scene(obj.id, task.id, params, robot_id=req.robot_id)
+    try:
+        bundle = build_task_scene(obj.id, task.id, params, robot_id=req.robot_id, clutter=req.clutter,
+                                  layout_seed=req.layout_seed)
+    except ValueError as e:
+        raise SelectionError(str(e)) from e
     info = task_info(task, obj, params)
     job_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{req.robot_id}_{obj.id}_{task.id}_{uuid.uuid4().hex[:4]}"
     return PlannerBrief(
@@ -149,6 +154,8 @@ def make_brief(req: PlannerRequest) -> PlannerBrief:
         task=info,
         task_params=params,
         settings=req.settings,
+        clutter=list(req.clutter),
+        layout_seed=req.layout_seed,
         success_criteria=info.criteria,
         default_scene=describe(bundle),
         kinematic_summary=summarize_kinematics(bundle),

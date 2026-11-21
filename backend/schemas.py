@@ -151,6 +151,7 @@ class ObjectInfo(BaseModel):
     physics: dict[str, Any] = Field(
         description="PG-VLM concepts: material, fragility, deformability, transparency, contents, can_contain_liquid, sealed"
     )
+    can_be_extra: bool = Field(default=True, description="Can be added to another object's scene as clutter")
 
 
 class RobotInfo(BaseModel):
@@ -192,6 +193,8 @@ class PlannerRequest(BaseModel):
     task_params: dict[str, float] = Field(default_factory=dict)
     prompt: str = Field(min_length=1)
     settings: PlannerSettings = Field(default_factory=PlannerSettings)
+    clutter: list[str] = Field(default_factory=list, max_length=5, description="Extra library objects placed on the table")
+    layout_seed: int | None = Field(default=None, ge=0, le=2**31 - 1, description="None = default layout; N = shuffled positions")
 
 
 class PlannerBrief(BaseModel):
@@ -205,6 +208,8 @@ class PlannerBrief(BaseModel):
     task: TaskPresetInfo
     task_params: dict[str, float]
     settings: PlannerSettings = Field(default_factory=PlannerSettings)
+    clutter: list[str] = Field(default_factory=list, description="Extra library objects in the scene (pass to build_task_scene)")
+    layout_seed: int | None = Field(default=None, description="Shuffled layout seed (pass to build_task_scene); None = default layout")
     success_criteria: list[str]
     default_scene: dict[str, Any] = Field(description="Object/fixture pose of the default scene (planner may randomise).")
     kinematic_summary: str

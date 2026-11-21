@@ -25,6 +25,12 @@ render:
 
 # Simulator success thresholds (ground truth — never the critic's verdict). Used by sim/check.py
 # and shown in the UI's success criteria.
+layout:                          # "Shuffle layout" (seeded, reproducible); no seed = fixed default layout
+  target_range_m: 0.08           # target object centre within +/- this of the workspace origin
+  extras_range_m: 0.15           # other objects within +/- this (plus their own size, max ~3 cm more)
+  shuffle_yaw: true              # also random yaw (never for articulated objects or 'turn part toward hand')
+  max_redraws: 8                 # re-draw (same seed) if an object starts touching the robot
+
 checks:
   lift_tolerance_cm: 1.5         # lifted >= target - tolerance
   held_min_height_cm: 2.0        # "still held" = in hand contact and at least this far above the table
@@ -46,3 +52,5 @@ checks:
   bit_tolerance_cm: 0.8          # screwdriver bit tip to screw head
   drawer_min_open_cm: 4
   pour_fraction: 0.7             # beads in the bowl
+  stack_tolerance_cm: 1.0        # tower / stack: height error per level
+  clutter_disturb_cm: 3          # pick from clutter: max displacement of the other objects

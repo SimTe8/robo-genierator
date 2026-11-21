@@ -1,0 +1,232 @@
+{
+  "object_id": "gen_spray_bottle",
+  "prompt": "a spray bottle with a trigger",
+  "model": "gemini-4-neon",
+  "created_at": "2026-11-21T15:14:59",
+  "asset": {
+    "name": "Spray bottle",
+    "description": "A compact plastic trigger spray bottle filled with cleaning liquid that can be uprighted, oriented by its trigger, and squeezed to actuate the sprayer.",
+    "grasp_note": "Wrap the palm and lower fingers around the cylindrical bottle body or collar while positioning the index and middle fingers over the front trigger.",
+    "mass_kg": 0.28,
+    "rgba": [
+      0.2,
+      0.62,
+      0.85,
+      0.85
+    ],
+    "yaw_symmetry_deg": 360.0,
+    "physics": {
+      "material": "plastic",
+      "fragility": "low",
+      "deformability": "slightly",
+      "transparency": "translucent",
+      "contents": "cleaning liquid",
+      "can_contain_liquid": true,
+      "sealed": true
+    },
+    "parts": [
+      {
+        "kind": "cylinder",
+        "size": [
+          0.032,
+          0.05
+        ],
+        "pos": [
+          -0.0105,
+          0.0,
+          -0.037
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": null,
+        "rgba": [
+          0.2,
+          0.62,
+          0.85,
+          0.85
+        ]
+      },
+      {
+        "kind": "ellipsoid",
+        "size": [
+          0.032,
+          0.032,
+          0.025
+        ],
+        "pos": [
+          -0.0105,
+          0.0,
+          0.013
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": null,
+        "rgba": [
+          0.2,
+          0.62,
+          0.85,
+          0.85
+        ]
+      },
+      {
+        "kind": "cylinder",
+        "size": [
+          0.015,
+          0.016
+        ],
+        "pos": [
+          -0.0105,
+          0.0,
+          0.045
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": null,
+        "rgba": [
+          0.92,
+          0.92,
+          0.94,
+          1.0
+        ]
+      },
+      {
+        "kind": "box",
+        "size": [
+          0.036,
+          0.015,
+          0.014
+        ],
+        "pos": [
+          -0.0005,
+          0.0,
+          0.073
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": null,
+        "rgba": [
+          0.92,
+          0.92,
+          0.94,
+          1.0
+        ]
+      },
+      {
+        "kind": "ellipsoid",
+        "size": [
+          0.018,
+          0.015,
+          0.014
+        ],
+        "pos": [
+          -0.0325,
+          0.0,
+          0.073
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": null,
+        "rgba": [
+          0.92,
+          0.92,
+          0.94,
+          1.0
+        ]
+      },
+      {
+        "kind": "box",
+        "size": [
+          0.007,
+          0.006,
+          0.014
+        ],
+        "pos": [
+          0.0235,
+          0.0,
+          0.051
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": "trigger",
+        "rgba": [
+          0.88,
+          0.22,
+          0.18,
+          1.0
+        ]
+      },
+      {
+        "kind": "capsule",
+        "size": [
+          0.006,
+          0.012
+        ],
+        "pos": [
+          0.0295,
+          0.0,
+          0.035
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": null,
+        "rgba": [
+          0.88,
+          0.22,
+          0.18,
+          1.0
+        ]
+      },
+      {
+        "kind": "cylinder",
+        "size": [
+          0.008,
+          0.009
+        ],
+        "pos": [
+          0.0415,
+          0.0,
+          0.075
+        ],
+        "axis": "x",
+        "yaw_deg": 0.0,
+        "name": "nozzle",
+        "rgba": [
+          0.88,
+          0.22,
+          0.18,
+          1.0
+        ]
+      }
+    ],
+    "buttons": [
+      {
+        "name": "button",
+        "pos": [
+          0.0355,
+          0.0,
+          0.035
+        ],
+        "half_size": [
+          0.003,
+          0.005,
+          0.012
+        ],
+        "travel_mm": 6.0,
+        "rgba": [
+          0.95,
+          0.3,
+          0.25,
+          1.0
+        ]
+      }
+    ],
+    "tasks": [
+      "pick_lift",
+      "stand_upright",
+      "turn_part_to_hand",
+      "press_tool_button",
+      "place_on_pad"
+    ]
+  },
+  "warnings": []
+}

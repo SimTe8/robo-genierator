@@ -36,6 +36,9 @@ GENERIC_TASKS: dict[str, str] = {
     "stand_upright": "it starts lying down; stand it up (tall objects)",
     "turn_part_to_hand": "rotate it so its first named part points at the hand (needs a named part)",
     "press_tool_button": "hold it and press its button (needs a button named 'button')",
+    "stack_on_block": "place it on top of an 8 cm wooden block (needs a flat bottom)",
+    "stack_tower": "stack 2-4 copies of it into a tower (flat top and bottom, like blocks or cans)",
+    "pick_from_clutter": "lift it out from among several other objects without disturbing them",
 }
 
 Kind = Literal["box", "cylinder", "sphere", "capsule", "ellipsoid"]

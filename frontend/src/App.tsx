@@ -7,6 +7,7 @@ import { ObjectLibrary } from './components/ObjectLibrary';
 import { PlannerControls } from './components/PlannerControls';
 import { PlannerPanel } from './components/PlannerPanel';
 import { ScenePreview } from './components/ScenePreview';
+import { SceneObjects } from './components/SceneObjects';
 import { TaskPicker } from './components/TaskPicker';
 import { OptionCard, Panel, Pill } from './components/ui';
 import { DEFAULT_PLANNER_SETTINGS } from './types';
@@ -31,6 +32,8 @@ export default function App() {
   const [objectId, setObjectId] = useState('key');
   const [taskId, setTaskId] = useState('unlock_with_key');
   const [params, setParams] = useState<Record<string, number>>({});
+  const [clutter, setClutter] = useState<string[]>([]); // extra library objects on the table
+  const [layoutSeed, setLayoutSeed] = useState<number | null>(null); // null = default layout
   const [promptDraft, setPromptDraft] = useState<string | null>(null); // null = use the template prompt
   const [settings, setSettings] = useState<PlannerSettings>(DEFAULT_PLANNER_SETTINGS);
 
@@ -79,13 +82,13 @@ export default function App() {
   const allowed = (id: string, rid = robotId) => tasksById[id]?.robots.includes(rid) ?? true;
 
   // Re-render the default scene + template prompt whenever object / task / params change.
-  const sceneKey = JSON.stringify([robotId, objectId, taskId, params]);
+  const sceneKey = JSON.stringify([robotId, objectId, taskId, params, clutter, layoutSeed]);
   useEffect(() => {
     if (!catalog) return;
     setSceneLoading(true);
     const t = setTimeout(() => {
       api
-        .scene(robotId, objectId, taskId, params)
+        .scene(robotId, objectId, taskId, params, clutter, layoutSeed)
         .then((s) => {
           setScene(s);
           setSceneError(null);
@@ -138,6 +141,8 @@ export default function App() {
         task_params: params,
         prompt,
         settings,
+        clutter,
+        layout_seed: layoutSeed,
       });
       setBrief(b);
       setLive(true);
@@ -272,6 +277,21 @@ export default function App() {
 
               <div className="flex min-w-0 flex-col gap-5">
                 <ScenePreview scene={scene} loading={sceneLoading} error={sceneError} robotName={robot.name} />
+                <SceneObjects
+                  objects={catalog.objects}
+                  target={object}
+                  sceneObjects={scene?.scene.other_objects ?? []}
+                  clutter={clutter}
+                  onChange={(ids) => {
+                    setClutter(ids);
+                    setPromptDraft(null);
+                  }}
+                  layoutSeed={layoutSeed}
+                  layoutNote={scene?.scene.layout_note}
+                  busy={sceneLoading}
+                  onShuffle={() => setLayoutSeed(1 + Math.floor(Math.random() * 99_999))}
+                  onResetLayout={() => setLayoutSeed(null)}
+                />
                 <PlannerControls robotId={robotId} settings={settings} onChange={setSettings} />
                 <TaskPicker
                   robotId={robotId}

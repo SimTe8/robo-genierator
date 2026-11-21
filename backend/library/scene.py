@@ -1,7 +1,8 @@
 """Build the MuJoCo scene for (robot, object, task).
 
 The UI only picks robot + object + task. Conditions (pose, scale, mass, friction, faults) are the
-PLANNER's job: it calls `build_task_scene(...)` with its own values. Defaults give a fixed scene.
+PLANNER's job: it calls `build_task_scene(...)` with its own values. Defaults give a fixed scene;
+`layout_seed=N` reproducibly shuffles where the target and the other objects stand (UI: "Shuffle layout").
 
     bundle = build_task_scene("cube", "rotate_in_hand", {"angle_deg": 90}, robot_id="wuji_hand",
                               object_xy=(0.01, -0.02), object_yaw_deg=30, size_scale=1.1)
@@ -24,18 +25,19 @@ from scipy.spatial.transform import Rotation
 
 from config import REPO_ROOT, load_config
 from library.generated import refresh_generated
+from library.multi import (BASE_BLOCK, Layout, BLUE, LOOKALIKE_DY, MAX_CLUTTER, PUSH_OFFSET, RED, SORT_PAD_HALF, SORT_PADS, add_extra,
+                           can_be_extra, describe_extras, plan_layout, recolour_main)
 from library.objects import OBJECTS_BY_ID, ObjectDef, Part, add_parts, default_part
 from library.tasks import TASKS_BY_ID, TaskPreset
+from sim.check import FINGERS
 from sim.scene_builder import ObjectSpec, SceneBundle, _add_cameras, _add_table, build_scene
 
 ROBOTS = ("wonik_allegro", "wuji_hand", "franka_emika_panda")
 ORIGIN = {"wonik_allegro": (0.0, 0.0), "wuji_hand": (0.0, 0.0), "franka_emika_panda": (0.50, 0.0)}
 
-DEFAULT_OBJECT_XY = (0.0, 0.0)  # under the fingers of the hands at their start pose
 FIXTURE_XY = {"target_pad": (0.0, -0.10), "bin": (0.0, -0.115), "nail_board": (0.0, -0.08), "lock": (0.0, -0.085),
               "shape_board": (0.0, -0.09), "screw_board": (0.0, -0.085), "cargo": (-0.02, 0.09), "bowl": (0.0, -0.10)}
 GHOST_AIR_POS = (0.07, 0.12, 0.09)  # beside the hand, height above the table
-PUSH_OFFSET = (0.0, -0.08)  # ghost outline position relative to the object
 
 # Lock geometry (keyhole on top, vertical insertion)
 LOCK_H = 0.035          # housing height above the table
@@ -58,7 +60,7 @@ def resolve_params(task: TaskPreset, obj: ObjectDef, params: dict[str, float] | 
     return {k: float(v) for k, v in out.items()}
 
 
-def check_combo(robot_id: str, object_id: str, task_id: str) -> str | None:
+def check_combo(robot_id: str, object_id: str, task_id: str, clutter: list[str] | None = None) -> str | None:
     """Why this combination is not allowed (None = fine)."""
     refresh_generated()
     obj, task = OBJECTS_BY_ID.get(object_id), TASKS_BY_ID.get(task_id)
@@ -70,6 +72,15 @@ def check_combo(robot_id: str, object_id: str, task_id: str) -> str | None:
         return f"'{task.name}' is not a preset for the {obj.name.lower()}."
     if robot_id not in task.robots:
         return f"'{task.name}' needs a multi-finger hand."
+    clutter = clutter or []
+    if len(clutter) > MAX_CLUTTER:
+        return f"At most {MAX_CLUTTER} extra objects."
+    for cid in clutter:
+        extra = OBJECTS_BY_ID.get(cid)
+        if extra is None:
+            return f"Unknown extra object '{cid}'."
+        if not can_be_extra(extra):
+            return f"The {extra.name.lower()} can't be added as an extra object (articulated or has its own parts)."
     return None
 
 
@@ -80,65 +91,115 @@ def build_task_scene(
     *,
     robot_id: str = "wonik_allegro",
     object_xy: tuple[float, float] | None = None,
-    object_yaw_deg: float = 0.0,
+    object_yaw_deg: float | None = None,
     size_scale: float = 1.0,
     mass_scale: float = 1.0,
     friction: float | None = None,
     disabled_joints: list[str] | None = None,
+    clutter: list[str] | None = None,
+    layout_seed: int | None = None,
 ) -> SceneBundle:
-    problem = check_combo(robot_id, object_id, task_id)
+    """`clutter`: extra library object ids to put on the table (multi-object scenes, any task).
+    `layout_seed`: None = default layout; an int = reproducible shuffle of positions (+ yaw where safe).
+    Explicit `object_xy` / `object_yaw_deg` override the shuffle for the target."""
+    problem = check_combo(robot_id, object_id, task_id, clutter)
     if problem:
         raise ValueError(problem)
     obj, task = OBJECTS_BY_ID[object_id], TASKS_BY_ID[task_id]
     p = resolve_params(task, obj, params)
     ox, oy = ORIGIN[robot_id]
-    rel = object_xy or DEFAULT_OBJECT_XY
-    xy = (ox + rel[0], oy + rel[1])
 
-    def populate(spec: mujoco.MjSpec, _robot: str, top_z: float, _center, _half):
-        r0 = Rotation.from_euler("z", object_yaw_deg, degrees=True)
-        hz = obj.half_extents[2] * size_scale
-        if obj.articulation is not None:
-            obj_spec = _add_articulated(spec, obj, xy, top_z, r0, size_scale)
+    def assemble(layout: Layout) -> SceneBundle:
+        rel, extras, multi_info = layout.target_xy, layout.extras, layout.info
+        xy = (ox + rel[0], oy + rel[1])
+
+        def populate(spec: mujoco.MjSpec, _robot: str, top_z: float, _center, _half):
+            r0 = Rotation.from_euler("z", layout.target_yaw_deg, degrees=True)
+            hz = obj.half_extents[2] * size_scale
+            if obj.articulation is not None:
+                obj_spec = _add_articulated(spec, obj, xy, top_z, r0, size_scale)
+            else:
+                if task.initial_pose == "lying":
+                    r0 = r0 * Rotation.from_euler("x", 90, degrees=True)
+                    hz = obj.half_extents[1] * size_scale
+                body = spec.worldbody.add_body()
+                body.name = "target_object"
+                body.pos = [xy[0], xy[1], top_z + hz + 0.001]
+                body.quat = _quat_wxyz(r0)
+                j = body.add_joint()
+                j.name = "target_object_freejoint"
+                j.type = mujoco.mjtJoint.mjJNT_FREE
+                rgba = tuple(multi_info.get("target_rgba", obj.rgba))
+                parts = recolour_main(obj.parts) if "target_rgba" in multi_info else obj.parts
+                add_parts(body, parts, rgba, obj.mass_kg, size_scale)
+                _add_children(body, obj, size_scale)
+                hx, hy, _ = (v * size_scale for v in obj.half_extents)
+                obj_spec = ObjectSpec("box", [hx, hy, hz], list(body.pos), _quat_wxyz(r0), list(obj.rgba), obj.mass_kg * size_scale**3)
+
+            info = _add_fixture_and_targets(spec, obj, task, p, xy, (ox, oy), top_z, r0, size_scale)
+            info.update(_add_special(spec, obj, xy, top_z, size_scale))
+            info.update(multi_info)
+            info.update(layout_seed=layout.seed, target_xy_rel=[round(v, 4) for v in rel], target_yaw_deg=round(layout.target_yaw_deg, 1))
+            if "sort_pads" in info:
+                info["sort_pads"] = {c: [ox + x, oy + y, top_z] for c, (x, y) in info["sort_pads"].items()}
+            if any(e.name == "base_block" for e in extras):
+                info["base_half"] = list(BASE_BLOCK.half_extents)
+            info["extras"] = describe_extras(extras)
+            for e in extras:
+                add_extra(spec, e, (ox, oy), top_z)
+            info.update(goal=task.goal, part=default_part(obj), yaw_symmetry_deg=obj.yaw_symmetry_deg,
+                        start_quat=_quat_wxyz(r0), table_top_z=top_z, half_height=hz, origin=[ox, oy],
+                        upright_half_height=obj.half_extents[2] * size_scale,
+                        half_xy=[obj.half_extents[0] * size_scale, obj.half_extents[1] * size_scale], children=[c.name for c in obj.children],
+                        child_travel={c.name: c.range[1] * size_scale for c in obj.children})
+            return obj_spec, {"robot_id": robot_id, "object_id": obj.id, "task_id": task.id, "params": p, "task": info}
+
+        if robot_id == "wuji_hand":
+            bundle = _build_wuji_scene(populate, disabled_joints)
         else:
-            if task.initial_pose == "lying":
-                r0 = r0 * Rotation.from_euler("x", 90, degrees=True)
-                hz = obj.half_extents[1] * size_scale
-            body = spec.worldbody.add_body()
-            body.name = "target_object"
-            body.pos = [xy[0], xy[1], top_z + hz + 0.001]
-            body.quat = _quat_wxyz(r0)
-            j = body.add_joint()
-            j.name = "target_object_freejoint"
-            j.type = mujoco.mjtJoint.mjJNT_FREE
-            add_parts(body, obj.parts, obj.rgba, obj.mass_kg, size_scale)
-            _add_children(body, obj, size_scale)
-            hx, hy, _ = (v * size_scale for v in obj.half_extents)
-            obj_spec = ObjectSpec("box", [hx, hy, hz], list(body.pos), _quat_wxyz(r0), list(obj.rgba), obj.mass_kg * size_scale**3)
+            bundle = build_scene(robot_id=robot_id, scene_seed=0, disabled_joints=disabled_joints, populate=populate)  # type: ignore[arg-type]
 
-        info = _add_fixture_and_targets(spec, obj, task, p, xy, (ox, oy), top_z, r0, size_scale)
-        info.update(_add_special(spec, obj, xy, top_z, size_scale))
-        info.update(goal=task.goal, part=default_part(obj), yaw_symmetry_deg=obj.yaw_symmetry_deg,
-                    start_quat=_quat_wxyz(r0), table_top_z=top_z, half_height=hz, origin=[ox, oy],
-                    upright_half_height=obj.half_extents[2] * size_scale, children=[c.name for c in obj.children],
-                    child_travel={c.name: c.range[1] * size_scale for c in obj.children})
-        return obj_spec, {"robot_id": robot_id, "object_id": obj.id, "task_id": task.id, "params": p, "task": info}
+        m = bundle.model
+        if mass_scale != 1.0 or friction is not None:
+            bid = m.body("target_object").id
+            m.body_mass[bid] *= mass_scale
+            m.body_inertia[bid] *= mass_scale
+            for g in range(m.ngeom):
+                if m.geom_bodyid[g] == bid and friction is not None:
+                    m.geom_friction[g, 0] = friction
+        mujoco.mj_forward(m, bundle.data)
+        return bundle
 
-    if robot_id == "wuji_hand":
-        bundle = _build_wuji_scene(populate, disabled_joints)
-    else:
-        bundle = build_scene(robot_id=robot_id, scene_seed=0, disabled_joints=disabled_joints, populate=populate)  # type: ignore[arg-type]
+    def layout_for(seed: int | None, attempt: int = 0) -> Layout:
+        return plan_layout(task, obj, p, list(clutter or []), size_scale, seed=seed, attempt=attempt,
+                           object_xy=object_xy, object_yaw_deg=object_yaw_deg)
 
-    m = bundle.model
-    if mass_scale != 1.0 or friction is not None:
-        bid = m.body("target_object").id
-        m.body_mass[bid] *= mass_scale
-        m.body_inertia[bid] *= mass_scale
-        for g in range(m.ngeom):
-            if m.geom_bodyid[g] == bid and friction is not None:
-                m.geom_friction[g, 0] = friction
-    mujoco.mj_forward(m, bundle.data)
+    if layout_seed is None:
+        return assemble(layout_for(None))
+    # Shuffled: the sampler only knows table/fixture/object footprints, not the robot's start pose, so re-draw
+    # (deterministically: next draw of the same seed) if anything starts in contact with the robot.
+    tries = int(load_config().get("layout", {}).get("max_redraws", 8))
+    for attempt in range(tries):
+        bundle = assemble(layout_for(layout_seed, attempt))
+        if not _robot_touches_objects(bundle):
+            return bundle
+    bundle = assemble(layout_for(None))  # give up: default layout (always clear), keep the requested seed on record
+    bundle.extras["task"].update(layout_seed=layout_seed, layout_note=f"shuffle failed after {tries} draws; default layout used")
     return bundle
+
+
+def _robot_touches_objects(bundle: SceneBundle) -> bool:
+    """True if any robot body touches the target or an extra object right after building."""
+    m, d = bundle.model, bundle.data
+    robot_roots = tuple(FINGERS[bundle.extras["robot_id"]]) + ("link",)  # hands: palm-rooted; Panda: link0-rooted
+    t = bundle.extras["task"]
+    ours = {"target_object", "target_base", *(e["body"] for e in t.get("extras", [])), *t.get("distractors", [])}
+    for i in range(d.ncon):
+        c = d.contact[i]
+        roots = [m.body(int(m.body_rootid[m.geom_bodyid[g]])).name for g in (c.geom1, c.geom2)]
+        if any(r.startswith(robot_roots) for r in roots) and any(r in ours for r in roots):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------------------------
@@ -295,7 +356,7 @@ def _add_special(spec, obj: ObjectDef, xy, top_z, scale) -> dict[str, Any]:
         return {"beads": names}
     if obj.special == "lookalike_cans":
         names = []
-        for i, dy in enumerate((0.075, -0.075)):
+        for i, dy in enumerate((LOOKALIKE_DY, -LOOKALIKE_DY)):
             b = spec.worldbody.add_body()
             b.name = f"distractor_{i}"
             b.pos = [xy[0], xy[1] + dy, top_z + obj.half_extents[2] * scale + 0.001]
@@ -350,6 +411,11 @@ def _add_fixture_and_targets(spec, obj: ObjectDef, task: TaskPreset, p, xy, orig
         half = 0.045
         _static_box(wb, "fixture_pad", (cx, cy, top_z + 0.0005), (half, half, 0.0005), (0.15, 0.85, 0.35, 0.55), collide=False)
         info.update(zone_center=[cx, cy, top_z], zone_half=[half, half])
+    elif fx == "sort_pads":
+        for colour, (dx, dy) in SORT_PADS.items():
+            rgba = (*(RED if colour == "red" else BLUE)[:3], 0.45)
+            _static_box(wb, f"fixture_pad_{colour}", (origin[0] + dx, origin[1] + dy, top_z + 0.0005),
+                        (SORT_PAD_HALF, SORT_PAD_HALF, 0.0005), rgba, collide=False)
     elif fx == "bin":
         cx, cy = at("bin")
         inner, wall, h = 0.055, 0.005, 0.035
@@ -517,7 +583,10 @@ def describe(bundle: SceneBundle) -> dict[str, Any]:
         "object_mass_kg": round(float(m.body_subtreemass[bid]), 3),
         "table_top_z": round(t["table_top_z"], 4),
         "fixture": t.get("fixture"),
+        "layout_seed": t.get("layout_seed"),
     }
+    if t.get("layout_note"):
+        out["layout_note"] = t["layout_note"]
     for key in ("zone_center", "zone_half", "zone_radius", "rim_z", "target_pos", "target_quat", "nail_start_z", "lock_center",
                 "lock_top_z", "hole_center", "board_top_z", "screw_head"):
         if key in t:
@@ -525,6 +594,12 @@ def describe(bundle: SceneBundle) -> dict[str, Any]:
             out[key] = [round(float(x), 4) for x in v] if isinstance(v, list) else round(float(v), 4)
     if "distractors" in t:
         out["distractors"] = t["distractors"]
+    if t.get("extras"):  # multi-object scenes: every other free body, with its live position
+        out["other_objects"] = [{**e, "position": [round(float(v), 4) for v in d.xpos[m.body(e["body"]).id]]} for e in t["extras"]]
+    if "sort_pads" in t:
+        out["sort_pads"] = {c: [round(float(v), 4) for v in xyz] for c, xyz in t["sort_pads"].items()}
+        out["sort_pad_half"] = t["sort_pad_half"]
+        out["target_colour"] = "red"
     return out
 
 

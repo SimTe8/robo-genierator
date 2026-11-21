@@ -12,33 +12,44 @@ import time
 from datetime import datetime
 from typing import Any
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 from config import OUTPUTS_DIR, REPO_ROOT
 
-load_dotenv(REPO_ROOT / ".env")
+ENV_PATH = REPO_ROOT / ".env"
 LOG_PATH = OUTPUTS_DIR / "logs" / "gemini_calls.jsonl"
+PLACEHOLDER = "your_gemini_api_key_here"
 
 _client = None
+_client_key: str | None = None
 
 
 class GeminiUnavailable(RuntimeError):
     pass
 
 
+def _key() -> str:
+    """Re-read .env each time, so a key pasted while the server runs works without a restart."""
+    for key in ((dotenv_values(ENV_PATH).get("GEMINI_API_KEY") or ""), os.environ.get("GEMINI_API_KEY", "")):
+        key = key.strip()
+        if key and key != PLACEHOLDER:
+            return key
+    return ""
+
+
 def available() -> bool:
-    key = os.environ.get("GEMINI_API_KEY", "")
-    return bool(key) and key != "your_gemini_api_key_here"
+    return bool(_key())
 
 
 def _get_client():
-    global _client
-    if not available():
+    global _client, _client_key
+    key = _key()
+    if not key:
         raise GeminiUnavailable("GEMINI_API_KEY is not set. Put it in the repo-root .env file (not .env.example).")
-    if _client is None:
+    if _client is None or key != _client_key:
         from google import genai
 
-        _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+        _client, _client_key = genai.Client(api_key=key), key
     return _client
 
 

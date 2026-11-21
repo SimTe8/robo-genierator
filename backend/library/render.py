@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import gl_setup  # noqa: F401  (must precede mujoco)
 
+import os
+import uuid
 from pathlib import Path
 
 import imageio.v3 as iio
@@ -18,9 +20,9 @@ from library.scene import build_task_scene, describe, object_thumbnail_scene
 
 def _write(out: Path, img: np.ndarray) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_suffix(".tmp.png")
+    tmp = out.with_name(f"{out.stem}.{os.getpid()}.{uuid.uuid4().hex[:6]}.tmp.png")  # unique: parallel renders of one key
     iio.imwrite(tmp, img)
-    tmp.replace(out)
+    tmp.replace(out)  # atomic; the last identical render wins
 
 
 def render_thumbnail(object_id: str, out_path: str) -> None:
@@ -42,8 +44,9 @@ def render_thumbnail(object_id: str, out_path: str) -> None:
         r.close()
 
 
-def render_preview(robot_id: str, object_id: str, task_id: str, params: dict[str, float], out_path: str) -> dict:
-    bundle = build_task_scene(object_id, task_id, params, robot_id=robot_id)
+def render_preview(robot_id: str, object_id: str, task_id: str, params: dict[str, float], out_path: str,
+                   clutter: list[str] | None = None, layout_seed: int | None = None) -> dict:
+    bundle = build_task_scene(object_id, task_id, params, robot_id=robot_id, clutter=clutter, layout_seed=layout_seed)
     m, d = bundle.model, bundle.data
     for _ in range(60):  # settle onto the table
         mujoco.mj_step(m, d)

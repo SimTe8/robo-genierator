@@ -29,11 +29,12 @@ cp .env.example .env
 # Edit .env and set GEMINI_API_KEY=...
 ```
 
-### 3. Public Robot Assets (`mujoco_menagerie`)
-Robot models are **not** committed to this repository. Download them into `assets/mujoco_menagerie/`:
+### 3. Robot Models (one command)
+Robot models are **not** committed to this repository. Download them (Franka Panda + Allegro from `mujoco_menagerie`, and the Wuji hand) with:
 ```bash
-git clone --depth 1 https://github.com/google-deepmind/mujoco_menagerie.git assets/mujoco_menagerie
+python scripts/setup_assets.py --check   # ~120 MB, pinned commits; --check compiles each robot in MuJoCo
 ```
+Standard library only (runs before `pip install`), works on macOS / Linux / Windows, uses git when available (sparse checkout: only the menagerie folders we use) and otherwise downloads a GitHub zip. Re-running skips what is already there; `--force` re-downloads, `--only wuji` fetches just the Wuji hand.
 
 ### 4. Frontend
 ```bash
@@ -108,16 +109,15 @@ cd frontend && npm run dev     # http://localhost:5173 (proxies /api and /output
 ```
 
 - **Robots**: Allegro hand and Wuji hand (multi-finger, free palm on a mocap weld named `palm_mocap`) and Franka Panda (arm + parallel gripper). In-hand tasks are offered for the hands only.
-- **Objects** (`backend/library/objects.py`, 24, built from MuJoCo primitives — no third-party meshes): in-hand (cube, die, egg, pen, T/L-blocks), insertion (key + lock, round/square pegs + shape sorter), tools (power screwdriver with a spring-loaded button, hammer + nail, screwdriver), physical reasoning (cup of beads + bowl, three look-alike cans of which one is full, mug, bottle, ball, can, card), articulated (button panel, drawer, valve, dial, jar lid).
+- **Objects** (`backend/library/objects.py`, 24 + generated, built from MuJoCo primitives — no third-party meshes): in-hand (cube, die, egg, pen, T/L-blocks), insertion (key + lock, round/square pegs + shape sorter), tools (power screwdriver with a spring-loaded button, hammer + nail, screwdriver), physical reasoning (cup of beads + bowl, three look-alike cans of which one is full, mug, bottle, ball, can, card), articulated (button panel, drawer, valve, dial, jar lid).
 - **Physical concepts** (after [PG-VLM](https://iliad.stanford.edu/pg-vlm/)): every object carries material, fragility, deformability, transparency, contents, can-contain-liquid and sealed. They are shown in the UI and sent to the planner.
-- **Task presets** (`backend/library/tasks.py`, 26): e.g. insert & turn a key (the lock only turns through the key), insert a peg into the *matching* hole, hold a power screwdriver, press its button and drive a screw, press two buttons at once, open a drawer and put a block inside, pour beads into a bowl, find and lift the heaviest of three identical cans, plus grasp / in-hand / place / push tasks.
+- **Task presets** (`backend/library/tasks.py`, 31): e.g. insert & turn a key (the lock only turns through the key), insert a peg into the *matching* hole, hold a power screwdriver, press its button and drive a screw, press two buttons at once, open a drawer and put a block inside, pour beads into a bowl, find and lift the heaviest of three identical cans, plus grasp / in-hand / place / push tasks.
+- **Multi-object scenes** (`backend/library/multi.py`): five presets spawn their own extra bodies — *stack into a tower* (2–4 copies), *stack on the block*, *put them all in the bin*, *sort by colour* (red/blue copies onto red/blue pads) and *pick it out of the clutter* (target packed among other library objects). In the **Scene objects** panel you can also add up to 5 library objects as clutter to *any* task (`clutter=[...]` in `build_task_scene`, `PlannerRequest.clutter`). Extras are placed deterministically on free table spots, named by role (`stack_1`, `bin_item_1`, `sort_1`, `base_block`, `other_1`, `clutter_1`), and listed with live positions in the brief's `default_scene.other_objects`.
+- **Shuffle layout** (`library/multi.py → plan_layout`, ranges in `config.yaml → layout`): before sending, *Shuffle layout* moves the target (within ±8 cm of the workspace origin) and every other object (and turns them, except articulated objects and *turn part toward hand*, where a random yaw could already solve the task). It is driven by a seed, so the same `layout_seed` always rebuilds the same scene: the preview, `POST /api/scene` and the planner brief (`PlannerBrief.layout_seed`, `build_task_scene(..., layout_seed=…)`) all agree. Objects never overlap each other or the fixtures; if anything would start touching the robot, the same seed re-draws deterministically. *Default* returns to the fixed layout. The planner's own `object_xy` / `object_yaw_deg` still override the target's pose.
 - **Simulator ground truth** (`backend/sim/check.py`): `snapshot()` before, `evaluate()` after; thresholds in `config.yaml → checks`.
 - **Hand-off** (`backend/planner_hub.py`): `POST /api/planner/jobs` writes `outputs/jobs/<job_id>/job.json` (robot, prompt, object + physics, task, params, success criteria, default scene, kinematic summary) and starts the planner in a worker process; progress streams to the UI over SSE.
-- **Plugging in the planner**: expose `PLANNER` in `backend/agents/planner.py` with `name` and `run(brief, job_dir, emit)`. Build scenes with your own conditions via `library.scene.build_task_scene(object_id, task_id, params, robot_id=…, object_xy=…, object_yaw_deg=…, size_scale=…, mass_scale=…, friction=…, disabled_joints=…)`; execute with `sim.executor.execute_rollout`; score with `sim.check`.
-- **Wuji hand model** (MIT, not committed):
-  ```bash
-  git clone --depth 1 https://github.com/wuji-technology/wuji-hand-description.git assets/wuji-hand-description
-  ```
+- **Plugging in the planner**: expose `PLANNER` in `backend/agents/planner.py` with `name` and `run(brief, job_dir, emit)`. Build scenes with your own conditions via `library.scene.build_task_scene(object_id, task_id, params, robot_id=…, object_xy=…, object_yaw_deg=…, size_scale=…, mass_scale=…, friction=…, disabled_joints=…, clutter=brief.clutter)`; execute with `sim.executor.execute_rollout`; score with `sim.check`.
+- **Wuji hand model** (MIT, not committed): downloaded by `python scripts/setup_assets.py` (pinned to `wuji-technology/wuji-hand-description@bbc2f64`).
 - **MuJoCo 4 / macOS notes**: joint `damping` and `stiffness` are 3-vectors in `MjSpec`; menagerie scenes compile angles in **degrees** (Wuji in radians) — `library/scene.py` handles both. No EGL on macOS: the backend picks `MUJOCO_GL=cgl` (`backend/gl_setup.py`); interactive viewers need `mjpython`.
 
 ## Side Quest: Generate Objects with Gemini
@@ -129,7 +129,7 @@ Describe an object ("a padlock with a U-shaped shackle") in the **Side quest** p
 python backend/sidequest/forge_cli.py "a TV remote with a power button" --save
 ```
 
-- Model: `config.yaml → models.asset_generator`. All Gemini calls go through `backend/agents/gemini_client.py` (the only SDK import; logs to `outputs/logs/gemini_calls.jsonl`). The planner/critic should extend that file.
+- Model: `config.yaml → models.asset_generator`. The key is re-read from `.env` on every call, so pasting it while the server runs works without a restart. All Gemini calls go through `backend/agents/gemini_client.py` (the only SDK import; logs to `outputs/logs/gemini_calls.jsonl`). The planner/critic should extend that file.
 
 ## Asset Attribution & Licenses
 
