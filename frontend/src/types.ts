@@ -144,7 +144,7 @@ export const DEFAULT_PLANNER_SETTINGS: PlannerSettings = {
   scene_seed: 42,
   disabled_joints: [],
   chunk_step_deg: null,
-  dr_episodes: 0,
+  dr_episodes: 20,
   task_type_override: 'auto',
   object_shape_override: 'auto',
 };

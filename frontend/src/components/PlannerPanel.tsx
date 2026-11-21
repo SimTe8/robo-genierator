@@ -69,6 +69,8 @@ export function PlannerPanel({
     .map((e) => ({ seq: e.seq, text: e.message }));
   const nonTerminalEvents = events.filter((e) => e.kind !== 'terminal');
   const latestStatus = [...events].reverse().find((e) => e.kind === 'status');
+  const drResultLine =
+    [...terminalLines].reverse().find((l) => l.text.trim().startsWith('DR Result:'))?.text.trim() ?? null;
   const stitchedVideoUrl =
     typeof final?.data?.stitched_video_url === 'string' && final.data.stitched_video_url
       ? final.data.stitched_video_url
@@ -207,6 +209,17 @@ export function PlannerPanel({
               </a>
             )}
           </span>
+        </div>
+      )}
+
+      {/* Domain Randomization Multiplier Result Banner */}
+      {drResultLine && (
+        <div className="mb-4 flex items-center gap-2.5 rounded-2xl border border-gemini-blue/40 bg-gemini-blue/10 px-4 py-3 text-xs text-gemini-sky">
+          <Sparkles className="size-4 shrink-0" />
+          <div>
+            <span className="font-display font-semibold text-fg">Domain Randomization Dataset Multiplication: </span>
+            <span className="font-mono text-ok">{drResultLine.replace(/^DR Result:\s*/, '')}</span>
+          </div>
         </div>
       )}
 

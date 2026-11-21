@@ -1,4 +1,4 @@
-import { Bot, ChevronRight, Hand } from 'lucide-react';
+import { Bot, Hand } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { AssetForge } from './components/AssetForge';
@@ -28,9 +28,9 @@ export default function App() {
   const [bootError, setBootError] = useState<string | null>(null);
   const [hackathonOpen, setHackathonOpen] = useState(false);
 
-  const [robotId, setRobotId] = useState('wonik_allegro');
-  const [objectId, setObjectId] = useState('key');
-  const [taskId, setTaskId] = useState('unlock_with_key');
+  const [robotId, setRobotId] = useState('franka_emika_panda');
+  const [objectId, setObjectId] = useState('mug');
+  const [taskId, setTaskId] = useState('place_on_pad');
   const [params, setParams] = useState<Record<string, number>>({});
   const [clutter, setClutter] = useState<string[]>([]); // extra library objects on the table
   const [layoutSeed, setLayoutSeed] = useState<number | null>(null); // null = default layout
@@ -124,6 +124,57 @@ export default function App() {
     setPromptDraft(null);
   };
 
+  const applyJuryPreset = (preset: 'overhang' | 'allegro_spinner' | 'mug_pad') => {
+    setClutter([]);
+    setLayoutSeed(null);
+    if (preset === 'overhang') {
+      setRobotId('franka_emika_panda');
+      setObjectId('cube');
+      setTaskId('pick_lift');
+      setParams({ lift_cm: 12 });
+      setPromptDraft('Pick up the object and lift it at least 12 cm above the table while avoiding the red overhang obstacle.');
+      setSettings({
+        ...DEFAULT_PLANNER_SETTINGS,
+        task_type_override: 'obstacle_grasp',
+        scene_seed: 42,
+        max_attempts: 4,
+        dr_episodes: 20,
+        planner_model: 'models/gemini-4-neon',
+        critic_model: 'models/gemini-4-hydrogen',
+      });
+    } else if (preset === 'allegro_spinner') {
+      setRobotId('wonik_allegro');
+      setObjectId('cube');
+      setTaskId('rotate_in_hand');
+      setParams({ angle_deg: 90 });
+      setPromptDraft('Rotate the multi-colored cube on the spindle in-hand by at least 90 degrees using coordinated finger gaits.');
+      setSettings({
+        ...DEFAULT_PLANNER_SETTINGS,
+        task_type_override: 'in_hand_spindle',
+        scene_seed: 302,
+        max_attempts: 3,
+        dr_episodes: 20,
+        planner_model: 'models/gemini-4-neon',
+        critic_model: 'models/gemini-4-hydrogen',
+      });
+    } else {
+      setRobotId('franka_emika_panda');
+      setObjectId('mug');
+      setTaskId('place_on_pad');
+      setParams({});
+      setPromptDraft(null);
+      setSettings({
+        ...DEFAULT_PLANNER_SETTINGS,
+        task_type_override: 'auto',
+        scene_seed: 42,
+        max_attempts: 4,
+        dr_episodes: 20,
+        planner_model: 'models/gemini-4-neon',
+        critic_model: 'models/gemini-4-hydrogen',
+      });
+    }
+  };
+
   const prompt = promptDraft ?? scene?.prompt ?? '';
 
   const send = async () => {
@@ -208,21 +259,35 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-[1480px] px-4 pb-16 pt-5 sm:px-6">
-        {/* Live selection breadcrumb strip */}
+        {/* Live selection breadcrumb strip + 1-click Jury Demo Presets */}
         {catalog && object && robot && (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-line/70 bg-panel/60 px-4 py-2 text-xs backdrop-blur-sm">
             <div className="flex flex-wrap items-center gap-1.5 text-muted">
-              <span className="text-[11px] font-medium text-faint">Workspace</span>
-              <ChevronRight className="size-3.5 text-faint" />
-              <span className="font-medium text-fg">{robot.name}</span>
-              <ChevronRight className="size-3.5 text-faint" />
-              <span className="font-medium text-fg">{object.name}</span>
-              {activeTask && (
-                <>
-                  <ChevronRight className="size-3.5 text-faint" />
-                  <span className="font-medium text-gemini-sky">{activeTask.name}</span>
-                </>
-              )}
+              <span className="text-[11px] font-semibold text-gemini-sky">Jury Presets:</span>
+              <button
+                type="button"
+                onClick={() => applyJuryPreset('overhang')}
+                className="rounded-full border border-gemini-blue/35 bg-gemini-blue/10 px-2.5 py-0.5 text-[11px] font-medium text-fg transition hover:border-gemini-sky/60 hover:bg-gemini-blue/20"
+              >
+                1. Overhang Grasp + 20× DR
+              </button>
+              <button
+                type="button"
+                onClick={() => applyJuryPreset('allegro_spinner')}
+                className="rounded-full border border-gemini-violet/35 bg-gemini-violet/10 px-2.5 py-0.5 text-[11px] font-medium text-fg transition hover:border-gemini-sky/60 hover:bg-gemini-violet/20"
+              >
+                2. Allegro 16-DOF Spinner + 20× DR
+              </button>
+              <button
+                type="button"
+                onClick={() => applyJuryPreset('mug_pad')}
+                className="rounded-full border border-ok/35 bg-ok/10 px-2.5 py-0.5 text-[11px] font-medium text-fg transition hover:border-ok/60 hover:bg-ok/20"
+              >
+                3. Mug Place on Pad + 20× DR
+              </button>
+              <span className="ml-2 hidden text-[11px] text-faint lg:inline">
+                ({robot.name} · {object.name} · {activeTask?.name ?? taskId} · DR={settings.dr_episodes}×)
+              </span>
             </div>
             {(brief || live) && (
               <a
