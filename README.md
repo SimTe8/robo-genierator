@@ -65,6 +65,33 @@ python backend/sim/test_grasp.py --robot franka_emika_panda --seed 42
 python backend/sim/test_grasp.py --robot franka_emika_panda --seed 42 --disable joint4
 ```
 
+### Run Closed-Loop Gemini 4 Planner + Video Critic + Decisions API (Phase 3)
+```bash
+# Healthy Panda with Carbon (Planner) + Neon (Video Critic + Decisions API)
+python backend/agents/run_loop.py --robot franka_emika_panda --seed 42 \
+  --planner models/gemini-4-carbon --critic models/gemini-4-neon --mode video
+
+# Live fault injection (lock joint4) with up to 4 self-correction attempts
+python backend/agents/run_loop.py --robot franka_emika_panda --seed 42 --disable joint4 \
+  --planner models/gemini-4-carbon --critic models/gemini-4-neon --mode video --max-attempts 4
+
+# Compare text-only feedback or one-shot baseline
+python backend/agents/run_loop.py --robot franka_emika_panda --seed 42 --mode text_only
+python backend/agents/run_loop.py --robot franka_emika_panda --seed 42 --mode one_shot
+
+# Dexterous In-Hand Cube Rotation on Wonik Allegro (16-DOF palm-up hand)
+python backend/agents/run_loop.py --task-type in_hand_rotation --seed 42 --target-rotation 60 \
+  --planner models/gemini-4-carbon --critic models/gemini-4-neon --mode video --max-attempts 4
+
+# Full 360-degree cyclic in-hand cube rotation stress test
+python backend/agents/run_loop.py --task-type in_hand_rotation --seed 42 --target-rotation 360 \
+  --planner models/gemini-4-carbon --critic models/gemini-4-hydrogen --mode video --max-attempts 6
+
+# In-Hand Cube Rotation with a disabled middle finger
+python backend/agents/run_loop.py --task-type in_hand_rotation --seed 42 --disable mfj1 mfj2 \
+  --planner models/gemini-4-carbon --critic models/gemini-4-neon --mode video --max-attempts 4
+```
+
 ## Asset Attribution & Licenses
 
 All robot MJCF models and meshes are from [`google-deepmind/mujoco_menagerie`](https://github.com/google-deepmind/mujoco_menagerie). Each model carries its own license in its folder:
