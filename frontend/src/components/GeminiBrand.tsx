@@ -123,8 +123,10 @@ export function HackathonModal({ open, onClose }: { open: boolean; onClose: () =
             Robo Genierator — Zero-Shot Cross-Embodiment Trajectory Studio
           </h2>
           <p className="mt-1.5 text-xs leading-relaxed text-muted">
-            Built live at the Gemini 4 NYC Hackathon. Combines a <strong className="text-fg">Gemini 4 Planner</strong>,
-            headless <strong className="text-fg">MuJoCo physics rollouts</strong>, and a{' '}
+            Built live at the Gemini 4 NYC Hackathon by <strong className="text-fg">Simon Tebeck</strong> (Cornell
+            University) and <strong className="text-fg">Ujwal Konanur Vinay</strong> (UMass). Combines a{' '}
+            <strong className="text-fg">Gemini 4 Planner</strong>, headless{' '}
+            <strong className="text-fg">MuJoCo physics rollouts</strong>, and a{' '}
             <strong className="text-fg">Gemini 4 Video Critic + Decisions API</strong> closed loop to synthesize and
             visually self-correct dexterous manipulation trajectories across robots and objects.
           </p>
@@ -146,15 +148,34 @@ export function HackathonModal({ open, onClose }: { open: boolean; onClose: () =
   );
 }
 
-/** Subtle Gemini 4 NYC Hackathon footer bar. */
+/** Subtle Gemini 4 NYC Hackathon & Authors footer bar. */
 export function HackathonFooter({ onOpenModal }: { onOpenModal: () => void }) {
   return (
     <footer className="mt-10 border-t border-line/70 pt-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted">
-        <div className="flex items-center gap-2.5">
-          <GeminiSparkle className="size-4" />
+      <div className="flex flex-col gap-2.5 text-xs text-muted">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <GeminiSparkle className="size-4" />
+            <span>
+              Created by <strong className="font-medium text-fg">Simon Tebeck</strong>{' '}
+              <span className="text-faint">(Cornell University)</span> &amp;{' '}
+              <strong className="font-medium text-fg">Ujwal Konanur Vinay</strong>{' '}
+              <span className="text-faint">(UMass)</span>
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-faint">
+              <GitBranch className="size-3 text-gemini-sky/80" />
+              Open-Source Robotics Demonstration Synthesis · MuJoCo 4 + Gemini 4
+            </span>
+            <span className="rounded-full border border-line bg-panel px-2.5 py-0.5 text-[10px] text-muted">
+              Element 119 · Multimodal Closed Loop
+            </span>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-faint">
           <span>
-            Built for the{' '}
+            Originated at the{' '}
             <button
               type="button"
               onClick={onOpenModal}
@@ -162,17 +183,9 @@ export function HackathonFooter({ onOpenModal }: { onOpenModal: () => void }) {
             >
               Gemini 4 NYC Hackathon
             </button>{' '}
-            <span className="text-faint">· Cerebral Valley · Nov 21, 2026</span>
+            · Cerebral Valley · Nov 21, 2026
           </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="inline-flex items-center gap-1.5 text-[11px] text-faint">
-            <GitBranch className="size-3 text-gemini-sky/80" />
-            Open-Source Robotics Demonstration Synthesis · MuJoCo 4 + Gemini 4
-          </span>
-          <span className="rounded-full border border-line bg-panel px-2.5 py-0.5 text-[10px] text-muted">
-            Element 119 · Multimodal Closed Loop
-          </span>
+          <span>Apache-2.0 License</span>
         </div>
       </div>
     </footer>

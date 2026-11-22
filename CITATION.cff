@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use Robo Genierator in your research, please cite it using the metadata below."
+title: "Robo Genierator: Closed-Loop Cross-Embodiment Trajectory Synthesis & Visual Self-Correction"
+type: software
+authors:
+  - family-names: "Tebeck"
+    given-names: "Simon"
+    affiliation: "Cornell University"
+  - family-names: "Konanur Vinay"
+    given-names: "Ujwal"
+    affiliation: "UMass"
+date-released: "2026-11-21"
+license: "Apache-2.0"
+repository-code: "https://github.com/SimTe8/robo-genierator"
+keywords:
+  - robotics
+  - manipulation
+  - imitation-learning
+  - trajectory-synthesis
+  - domain-randomization
+  - mujoco
+  - vision-language-models

@@ -2,6 +2,8 @@
 
 **Simulator-verified manipulation trajectory synthesis, calibrated multimodal self-correction, and $SE(2)$-equivariant multi-object domain randomization in MuJoCo 4.**
 
+**Authors:** **Simon Tebeck** (Cornell University) · **Ujwal Konanur Vinay** (UMass)
+
 ---
 
 ## Why Simulated Expert Trajectories Matter for Robot Learning
@@ -310,5 +312,24 @@ Repository source code is released under the [Apache 2.0 License](LICENSE). Robo
 | `franka_emika_panda` | [`google-deepmind/mujoco_menagerie`](https://github.com/google-deepmind/mujoco_menagerie) | Apache License 2.0 |
 | `wonik_allegro` | [`google-deepmind/mujoco_menagerie`](https://github.com/google-deepmind/mujoco_menagerie) | BSD 2-Clause (SimLab) |
 | `wuji_hand` | [`wuji-technology/wuji-hand-description`](https://github.com/wuji-technology/wuji-hand-description) | MIT License (Wuji Technology) |
+
+---
+
+## Authors & Citation
+
+- **Simon Tebeck** — Cornell University
+- **Ujwal Konanur Vinay** — UMass
+
+If this repository or its closed-loop trajectory synthesis pipeline is useful in your robotics research, please cite:
+
+```bibtex
+@software{tebeck2026robogenierator,
+  author       = {Tebeck, Simon and Konanur Vinay, Ujwal},
+  title        = {{Robo Genierator}: Closed-Loop Cross-Embodiment Trajectory Synthesis and Visual Self-Correction in {MuJoCo} 4},
+  year         = {2026},
+  url          = {https://github.com/SimTe8/robo-genierator},
+  note         = {Cornell University and UMass}
+}
+```
 
 *Originally created at the Gemini 4 NYC Hackathon (November 2026) and expanded for open-source robot learning research.*
