@@ -253,6 +253,8 @@ def _build_run_loop_command(brief: PlannerBrief, script_path: Path) -> tuple[lis
         s.feedback_mode,
         "--planner",
         s.planner_model,
+        "--thinking",
+        s.thinking_level,
         "--critic",
         s.critic_model,
         "--target-rotation",

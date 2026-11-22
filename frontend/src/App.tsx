@@ -6,6 +6,7 @@ import { GeminiSparkle, HackathonBadge, HackathonFooter, HackathonModal } from '
 import { ObjectLibrary } from './components/ObjectLibrary';
 import { PlannerControls } from './components/PlannerControls';
 import { PlannerPanel } from './components/PlannerPanel';
+import { ResearchDashboard } from './components/ResearchDashboard';
 import { ScenePreview } from './components/ScenePreview';
 import { SceneObjects } from './components/SceneObjects';
 import { TaskPicker } from './components/TaskPicker';
@@ -124,7 +125,7 @@ export default function App() {
     setPromptDraft(null);
   };
 
-  const applyJuryPreset = (preset: 'overhang' | 'allegro_spinner' | 'mug_pad') => {
+  const applyPreset = (preset: 'overhang' | 'allegro_spinner' | 'mug_pad' | 'stack_block') => {
     setClutter([]);
     setLayoutSeed(null);
     if (preset === 'overhang') {
@@ -153,6 +154,21 @@ export default function App() {
         task_type_override: 'in_hand_spindle',
         scene_seed: 302,
         max_attempts: 3,
+        dr_episodes: 20,
+        planner_model: 'models/gemini-4-neon',
+        critic_model: 'models/gemini-4-hydrogen',
+      });
+    } else if (preset === 'stack_block') {
+      setRobotId('franka_emika_panda');
+      setObjectId('cube');
+      setTaskId('stack_on_block');
+      setParams({});
+      setPromptDraft(null);
+      setSettings({
+        ...DEFAULT_PLANNER_SETTINGS,
+        task_type_override: 'auto',
+        scene_seed: 42,
+        max_attempts: 4,
         dr_episodes: 20,
         planner_model: 'models/gemini-4-neon',
         critic_model: 'models/gemini-4-hydrogen',
@@ -263,29 +279,36 @@ export default function App() {
         {catalog && object && robot && (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-line/70 bg-panel/60 px-4 py-2 text-xs backdrop-blur-sm">
             <div className="flex flex-wrap items-center gap-1.5 text-muted">
-              <span className="text-[11px] font-semibold text-gemini-sky">Jury Presets:</span>
+              <span className="text-[11px] font-semibold text-gemini-sky">Benchmark Presets:</span>
               <button
                 type="button"
-                onClick={() => applyJuryPreset('overhang')}
+                onClick={() => applyPreset('overhang')}
                 className="rounded-full border border-gemini-blue/35 bg-gemini-blue/10 px-2.5 py-0.5 text-[11px] font-medium text-fg transition hover:border-gemini-sky/60 hover:bg-gemini-blue/20"
               >
                 1. Overhang Grasp + 20× DR
               </button>
               <button
                 type="button"
-                onClick={() => applyJuryPreset('allegro_spinner')}
+                onClick={() => applyPreset('allegro_spinner')}
                 className="rounded-full border border-gemini-violet/35 bg-gemini-violet/10 px-2.5 py-0.5 text-[11px] font-medium text-fg transition hover:border-gemini-sky/60 hover:bg-gemini-violet/20"
               >
                 2. Allegro 16-DOF Spinner + 20× DR
               </button>
               <button
                 type="button"
-                onClick={() => applyJuryPreset('mug_pad')}
+                onClick={() => applyPreset('mug_pad')}
                 className="rounded-full border border-ok/35 bg-ok/10 px-2.5 py-0.5 text-[11px] font-medium text-fg transition hover:border-ok/60 hover:bg-ok/20"
               >
                 3. Mug Place on Pad + 20× DR
               </button>
-              <span className="ml-2 hidden text-[11px] text-faint lg:inline">
+              <button
+                type="button"
+                onClick={() => applyPreset('stack_block')}
+                className="rounded-full border border-warn/35 bg-warn/10 px-2.5 py-0.5 text-[11px] font-medium text-fg transition hover:border-warn/60 hover:bg-warn/20"
+              >
+                4. Stack Block + 2-Object DR
+              </button>
+              <span className="ml-2 hidden text-[11px] text-faint xl:inline">
                 ({robot.name} · {object.name} · {activeTask?.name ?? taskId} · DR={settings.dr_episodes}×)
               </span>
             </div>
@@ -391,6 +414,10 @@ export default function App() {
                 onToggleTerminal={() => setTerminalOpen((v) => !v)}
                 onStop={stopRun}
               />
+            </div>
+
+            <div className="mt-5">
+              <ResearchDashboard refreshTrigger={events.length} />
             </div>
           </>
         )}

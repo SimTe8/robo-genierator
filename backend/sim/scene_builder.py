@@ -520,7 +520,8 @@ def build_scene(
 
             palm_site = palm_body.add_site()
             palm_site.name = "ee_site"
-            palm_site.pos = [0.0, 0.0, 0.0]
+            # Place TCP at the 4-finger + thumb grasp cage center (not the wrist base)
+            palm_site.pos = [0.062, 0.005, 0.010]
             palm_site.size = [0.008, 0.008, 0.008]
             palm_site.rgba = [0.1, 0.9, 0.1, 0.6]
 
@@ -578,7 +579,7 @@ def build_scene(
 
 
 def summarize_kinematics(bundle: SceneBundle) -> str:
-    """Return a concise text summary of the robot joints, actuators, and object."""
+    """Return a concise text summary of the robot joints, actuators, and object geometry/orientation."""
     m = bundle.model
     d = bundle.data
     lines = [
@@ -589,11 +590,75 @@ def summarize_kinematics(bundle: SceneBundle) -> str:
     obj_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "target_object")
     if obj_id >= 0:
         pos = d.xpos[obj_id]
+        obj_mat = d.xmat[obj_id].reshape(3, 3)
+        yaw_rad = math.atan2(float(obj_mat[1, 0]), float(obj_mat[0, 0]))
+        yaw_deg = math.degrees(yaw_rad)
+
+        spec = bundle.obj_spec
+        task_info = bundle.extras.get("task", {}) if isinstance(bundle.extras.get("task"), dict) else {}
+        if spec.shape == "box":
+            hx = float(spec.size[0])
+            # If lying on side (body +Y points up), horizontal depth is upright_half_height
+            if abs(float(obj_mat[2, 2])) < 0.5 and "upright_half_height" in task_info:
+                hy = float(task_info["upright_half_height"])
+            else:
+                hy = float(spec.size[1])
+            hz = float(spec.size[2])
+        elif spec.shape == "cylinder":
+            hx = hy = float(spec.size[0])
+            hz = float(spec.size[1])
+        else:
+            hx = hy = hz = float(spec.size[0])
+
+        dims_m = [round(2.0 * hx, 4), round(2.0 * hy, 4), round(2.0 * hz, 4)]
+        bottom_clearance_m = float(pos[2]) - hz - bundle.table_top_z
+        center_clearance_m = float(pos[2]) - bundle.table_top_z
+
         lines.append(
-            f"Target object: shape={bundle.obj_spec.shape}, "
-            f"size={[round(v, 4) for v in bundle.obj_spec.size]}, "
+            f"Target object: shape={spec.shape}, "
+            f"size={[round(v, 4) for v in spec.size]}, "
+            f"dims_m={dims_m} ([width_x, depth_y, height_z]), "
             f"pos=[{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}], "
-            f"mass={bundle.obj_spec.mass:.3f} kg"
+            f"yaw_rad={yaw_rad:.4f} (yaw_deg={yaw_deg:.1f}), "
+            f"table_clearance_m={bottom_clearance_m:.4f} (center_above_table_m={center_clearance_m:.4f}), "
+            f"mass={spec.mass:.3f} kg"
+        )
+
+        if bundle.robot_id == "franka_emika_panda":
+            width_x, depth_y, _ = dims_m
+            narrow_dim_m = min(width_x, depth_y)
+            # Extrinsic RPY [pi, 0, psi] closes Panda jaws along world [-sin(psi), cos(psi)] (angle psi + pi/2).
+            # Align jaw-closing axis with the narrower horizontal dimension of target_object:
+            if width_x <= depth_y:
+                raw_psi = yaw_rad + math.pi / 2.0
+                narrow_axis_label = "width_x"
+            else:
+                raw_psi = yaw_rad
+                narrow_axis_label = "depth_y"
+            grasp_yaw_rad = float(raw_psi % math.pi)
+            fits_note = (
+                "fits parallel jaw"
+                if narrow_dim_m <= 0.080
+                else "EXCEEDS 0.080m max jaw width — grasp handle/rim/part!"
+            )
+            lines.append(
+                f"Panda grasp geometry: parallel_jaw_max_open_m=0.080, "
+                f"narrower_horizontal_dim_m={narrow_dim_m:.4f} ({narrow_axis_label}, {fits_note}), "
+                f"recommended_topdown_grasp_yaw_rad={grasp_yaw_rad:.4f} "
+                f"(orientation_rpy=[3.1416, 0.0, {grasp_yaw_rad:.4f}])"
+            )
+
+    obs_roof_gid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "obstacle_roof")
+    if obs_roof_gid >= 0:
+        rc = d.geom_xpos[obs_roof_gid]
+        rs = m.geom_size[obs_roof_gid]
+        bottom_z = float(rc[2] - rs[2])
+        lines.append(
+            f"Workspace obstacle (obstacle_roof): spans x=[{rc[0] - rs[0]:.3f}, {rc[0] + rs[0]:.3f}], "
+            f"y=[{rc[1] - rs[1]:.3f}, {rc[1] + rs[1]:.3f}], bottom_z={bottom_z:.3f} m. "
+            "CRITICAL: Open entry is from -X (front, toward robot base). Tilt pitch to ~ -0.42 rad, "
+            "and RETRACT toward -X (dx <= -0.11, dz <= 0.06) BEFORE lifting high (dz >= 0.16 at dx <= -0.11) "
+            "so the wrist does not hit obstacle_roof during vertical lift!"
         )
 
     lines.append(f"Actuators ({m.nu}):")

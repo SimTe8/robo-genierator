@@ -10,6 +10,7 @@ RobotId = Literal["franka_emika_panda", "wonik_allegro", "wuji_hand"]
 TaskType = Literal["pick_and_lift", "obstacle_grasp", "in_hand_rotation", "in_hand_spindle"]
 DecisionType = Literal["ACCEPT_TRAJECTORY", "REFINE_GRASP", "GIVE_UP"]
 FeedbackMode = Literal["one_shot", "text_only", "video"]
+ThinkingLevel = Literal["minimal", "low", "medium", "high"]
 TaskTypeOverride = Literal["auto", "pick_and_lift", "obstacle_grasp", "in_hand_rotation", "in_hand_spindle"]
 ObjectShapeOverride = Literal["auto", "box", "cylinder", "sphere"]
 
@@ -22,7 +23,15 @@ class Waypoint(BaseModel):
         ...,
         min_length=3,
         max_length=3,
-        description="[dx, dy, dz] offset in meters relative to the object center.",
+        description="[dx, dy, dz] offset in meters relative to reference_frame.",
+    )
+    reference_frame: str = Field(
+        default="target_object",
+        description=(
+            "Coordinate frame anchor for position_offset (MimicGen-style subtask frame): "
+            "'target_object' (default), 'target_pad', 'bin', 'bowl', 'lock', 'hole', "
+            "'base_block', 'clutter_1'..'clutter_5', 'stack_1'..'stack_3', or 'world'."
+        ),
     )
     orientation_rpy: list[float] = Field(
         default_factory=lambda: [3.14159, 0.0, 0.0],
@@ -78,8 +87,9 @@ class RunRequest(BaseModel):
         description="Optional receding-horizon checkpoint milestone in degrees (e.g. 90 for 360 deg).",
     )
     feedback_mode: FeedbackMode = "video"
-    planner_model: str = "models/gemini-4-carbon"
-    critic_model: str = "models/gemini-4-neon"
+    planner_model: str = "models/gemini-4-neon"
+    critic_model: str = "models/gemini-4-hydrogen"
+    thinking_level: ThinkingLevel = "medium"
 
 
 class IterationEvent(BaseModel):
@@ -179,6 +189,7 @@ class PlannerSettings(BaseModel):
     feedback_mode: FeedbackMode = "video"
     planner_model: str = "models/gemini-4-neon"
     critic_model: str = "models/gemini-4-hydrogen"
+    thinking_level: ThinkingLevel = "medium"
     scene_seed: int = 42
     disabled_joints: list[str] = Field(default_factory=list)
     chunk_step_deg: float | None = Field(default=None, ge=30.0, le=180.0)

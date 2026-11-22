@@ -1,7 +1,7 @@
 """Closed-loop Planner -> MuJoCo Executor -> Visual Critic + Decisions API orchestrator.
 
 Supports both:
-1. Single-horizon iterative refinement (pick_and_lift, short in_hand_rotation)
+1. Single-horizon iterative refinement (pick_and_lift, multi-frame manipulation, short in_hand_rotation)
 2. Checkpointed Closed-Loop / Receding-Horizon Generation (e.g. 360-deg in-hand rotation
    broken into verified 90-deg chunks with MuJoCo qpos/qvel/ctrl state checkpointing and
    continuous MP4 + .npz stitching).
@@ -18,10 +18,9 @@ from typing import Callable
 
 import imageio.v3 as iio
 import numpy as np
-from dotenv import load_dotenv
 from google import genai
-from google.genai import types
 
+from agents import gemini_client
 from agents.critic import evaluate_rollout
 from agents.planner import plan_waypoints
 from schemas import DecisionType, IterationEvent, RunRequest
@@ -39,6 +38,30 @@ class LoopSummary:
     total_latency_s: float = 0.0
     exported_trajectory_path: str | None = None
     stitched_video_path: str | None = None
+
+
+def _merge_chunk_trajectories(chunk_trajectories: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
+    """Concatenate matching time-series arrays across chunks while copying scalar/metadata keys from the last chunk."""
+    if not chunk_trajectories:
+        return {}
+    chunk_t_lens = [int(np.asarray(ct["observation_qpos"]).shape[0]) for ct in chunk_trajectories]
+    merged: dict[str, np.ndarray] = {}
+    for key, last_val in chunk_trajectories[-1].items():
+        last_arr = np.asarray(last_val)
+        if (
+            last_arr.ndim >= 1
+            and all(key in ct for ct in chunk_trajectories)
+            and all(
+                np.asarray(ct[key]).ndim == last_arr.ndim
+                and np.asarray(ct[key]).shape[0] == t_len
+                and np.asarray(ct[key]).shape[1:] == last_arr.shape[1:]
+                for ct, t_len in zip(chunk_trajectories, chunk_t_lens)
+            )
+        ):
+            merged[key] = np.concatenate([np.asarray(ct[key]) for ct in chunk_trajectories], axis=0)
+        else:
+            merged[key] = last_arr
+    return merged
 
 
 def _run_checkpointed_rotation(
@@ -61,9 +84,7 @@ def _run_checkpointed_rotation(
     checkpoint: SimState | None = None
     events: list[IterationEvent] = []
     stitched_frames: list[np.ndarray] = []
-    stitched_obs: list[np.ndarray] = []
-    stitched_priv: list[np.ndarray] = []
-    stitched_act: list[np.ndarray] = []
+    chunk_trajectories: list[dict[str, np.ndarray]] = []
     global_attempt = 0
 
     for chunk_id in range(1, max_chunks + 1):
@@ -99,7 +120,7 @@ def _run_checkpointed_rotation(
             t_iter_start = time.time()
             prefix = f"Chunk {chunk_id} ({abs(cum_so_far):.0f}/{total_goal:.0f}°) | Att {local_att}/{attempts_per_chunk}"
 
-            status_fn(f"{prefix} | Planning gait ({request.planner_model})")
+            status_fn(f"{prefix} | Planning gait ({request.planner_model}, thinking={request.thinking_level})")
             plan = plan_waypoints(
                 client=client,
                 planner_model=request.planner_model,
@@ -113,6 +134,7 @@ def _run_checkpointed_rotation(
                 history=chunk_history if chunk_history else None,
                 task_type=request.task_type,
                 chunk_context=chunk_ctx,
+                thinking_level=request.thinking_level,
             )
 
             status_fn(f"{prefix} | Simulating & rendering MuJoCo chunk")
@@ -209,9 +231,7 @@ def _run_checkpointed_rotation(
             if rollout.sim_success and rollout.end_state is not None:
                 checkpoint = rollout.end_state
                 stitched_frames.extend(rollout.frames)
-                stitched_obs.append(rollout.trajectory["observation_qpos"])
-                stitched_priv.append(rollout.trajectory["privileged_obj_pos"])
-                stitched_act.append(rollout.trajectory["action_ctrl"])
+                chunk_trajectories.append(rollout.trajectory)
                 chunk_passed = True
                 break
 
@@ -233,18 +253,15 @@ def _run_checkpointed_rotation(
             fps=15,
             codec="libx264",
             pixelformat="yuv420p",
+            output_params=["-profile:v", "baseline", "-level", "3.0", "-movflags", "+faststart"],
         )
         stitched_video_str = str(stitched_mp4)
 
     exported_traj_path: str | None = None
-    if final_success and stitched_obs:
+    if final_success and chunk_trajectories:
         traj_file = traj_dir / f"verified_closedloop_{request.robot_id}_seed{request.scene_seed}_{run_id}.npz"
-        np.savez_compressed(
-            traj_file,
-            observation_qpos=np.concatenate(stitched_obs, axis=0),
-            privileged_obj_pos=np.concatenate(stitched_priv, axis=0),
-            action_ctrl=np.concatenate(stitched_act, axis=0),
-        )
+        merged_traj = _merge_chunk_trajectories(chunk_trajectories)
+        np.savez_compressed(traj_file, **merged_traj)
         exported_traj_path = str(traj_file)
 
     return LoopSummary(
@@ -266,8 +283,7 @@ def run_closed_loop(
     output_dir: Path | None = None,
 ) -> LoopSummary:
     """Run the full closed-loop trajectory generation pipeline for a RunRequest."""
-    load_dotenv(REPO_ROOT / ".env")
-    client = genai.Client(http_options=types.HttpOptions(api_version="v1beta"))
+    client = gemini_client.get_client(api_version="v1beta", timeout_s=120.0)
 
     def _status(msg: str) -> None:
         if on_status is not None:
@@ -310,14 +326,70 @@ def run_closed_loop(
         from library.scene import describe as describe_lib_scene
 
         desc = describe_lib_scene(init_bundle)
-        # Include exact world positions of articulated child parts (buttons, handles, lock plug)
+        # Include exact world positions of articulated child parts AND added clutter objects
         part_positions = {}
+        clutter_objects = []
+        target_bid = _mj.mj_name2id(init_bundle.model, _mj.mjtObj.mjOBJ_BODY, "target_object")
+        target_pos = init_bundle.data.xpos[target_bid] if target_bid >= 0 else np.zeros(3)
+        clutter_ids = list(request.library_clutter or [])
+
         for bid in range(init_bundle.model.nbody):
             bname = _mj.mj_id2name(init_bundle.model, _mj.mjtObj.mjOBJ_BODY, bid) or ""
-            if any(k in bname for k in ("button", "handle", "drawer", "lock", "lid", "valve", "dial", "pad", "bin", "hole")):
+            if bname.startswith("clutter_"):
+                pos = init_bundle.data.xpos[bid]
+                rel = pos - target_pos
+                # Look up corresponding clutter object metadata + primary geom RGBA color
+                idx = -1
+                try:
+                    idx = int(bname.split("_")[1]) - 1
+                except (IndexError, ValueError):
+                    pass
+                oid = clutter_ids[idx] if 0 <= idx < len(clutter_ids) else bname
+                rgba = None
+                for gid in range(init_bundle.model.ngeom):
+                    if init_bundle.model.geom_bodyid[gid] == bid:
+                        rgba = [round(float(v), 2) for v in init_bundle.model.geom_rgba[gid]]
+                        break
+                clutter_objects.append(
+                    {
+                        "body": bname,
+                        "object_id": oid,
+                        "rgba": rgba,
+                        "world_pos": [round(float(v), 4) for v in pos],
+                        "offset_from_target_object": [round(float(v), 4) for v in rel],
+                    }
+                )
+            elif any(k in bname for k in ("button", "handle", "drawer", "lock", "lid", "valve", "dial", "pad", "bin", "bowl", "hole")):
                 part_positions[bname] = [round(float(v), 4) for v in init_bundle.data.xpos[bid]]
+
+        available_frames: list[str] = ["target_object", "world"]
+        fixture_name = desc.get("fixture")
+        if fixture_name and str(fixture_name) not in available_frames:
+            available_frames.append(str(fixture_name))
+        if "hole_center" in desc and "hole" not in available_frames:
+            available_frames.append("hole")
+        for extra_obj in desc.get("other_objects") or []:
+            body_name = extra_obj.get("body") if isinstance(extra_obj, dict) else None
+            if body_name and body_name not in available_frames:
+                available_frames.append(str(body_name))
+        for c_obj in clutter_objects:
+            if c_obj["body"] not in available_frames:
+                available_frames.append(c_obj["body"])
+
+        desc["available_reference_frames"] = available_frames
         if part_positions:
             desc["part_world_positions"] = part_positions
+        if clutter_objects:
+            desc["added_clutter_objects"] = clutter_objects
+        if len(available_frames) > 2:
+            desc["multi_object_note"] = (
+                f"MIMICGEN MULTI-FRAME ANCHORING: Available `reference_frame` values in this scene are {available_frames}. "
+                "Use `reference_frame='target_object'` when picking/lifting `target_object`, and set `reference_frame` "
+                "directly to the destination fixture or extra/clutter body (e.g. 'target_pad', 'bin', 'bowl', 'lock', "
+                "'hole', 'base_block', 'stack_1', 'clutter_1') with local `position_offset=[0.0, 0.0, z_clearance]` "
+                "when transporting, placing, stacking, or inserting so the skill transfers zero-shot under domain randomization!"
+            )
+
         kinematic_summary += (
             "\n\nLIBRARY TASK SCENE GEOMETRY (object, fixtures, target pads, articulated parts):\n"
             + _json.dumps(desc, indent=2)
@@ -346,7 +418,7 @@ def run_closed_loop(
         prefix = f"Attempt {attempt_id}/{max_attempts}"
 
         # 1. Plan (Gemini 4 Planner)
-        _status(f"{prefix} | Planning trajectory ({request.planner_model})")
+        _status(f"{prefix} | Planning trajectory ({request.planner_model}, thinking={request.thinking_level})")
         plan = plan_waypoints(
             client=client,
             planner_model=request.planner_model,
@@ -356,6 +428,7 @@ def run_closed_loop(
             disabled_joints=request.disabled_joints,
             history=history if history else None,
             task_type=request.task_type,
+            thinking_level=request.thinking_level,
         )
 
         # 2. Execute & Render (MuJoCo EGL) on a fresh scene instance

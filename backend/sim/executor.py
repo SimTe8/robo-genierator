@@ -175,15 +175,19 @@ def _set_allegro_fingers(
                 closure = defaults[fname]
                 break
 
-        # Wuji hand: joint2 is abduction (keep centered for fingers 2-5, oppose for thumb), joint1/3/4 flex
+        # Wuji hand: thumb joint1 is CMC opposition (keep opposed downward even when open!),
+        # finger2-5 joint2 is abduction (keep 0.0), remaining joints flex to pinch/cage
         if aname.startswith("right_finger"):
-            if "joint2" in aname:
-                if aname.startswith("right_finger1"):
-                    data.ctrl[aid] = lo + 0.65 * (hi - lo) * closure
-                else:
-                    data.ctrl[aid] = 0.0
+            if aname == "right_finger1_joint1_actuator":
+                data.ctrl[aid] = lo + (0.85 + 0.10 * closure) * (hi - lo)
+            elif aname == "right_finger1_joint2_actuator":
+                data.ctrl[aid] = lo + (0.12 + 0.65 * closure) * (hi - lo)
+            elif aname.startswith("right_finger1_"):
+                data.ctrl[aid] = lo + (0.04 + 0.62 * closure) * (hi - lo)
+            elif "joint2" in aname:
+                data.ctrl[aid] = 0.0
             else:
-                data.ctrl[aid] = lo + (hi - lo) * (0.08 + 0.72 * closure)
+                data.ctrl[aid] = lo + (hi - lo) * (0.05 + 0.78 * closure)
         # Allegro hand: a0 is abduction, a1/a2/a3 flex
         elif aname.endswith("0"):
             if aname.startswith("th"):
@@ -192,6 +196,67 @@ def _set_allegro_fingers(
                 data.ctrl[aid] = 0.0
         else:
             data.ctrl[aid] = lo + (hi - lo) * (0.10 + 0.75 * closure)
+
+
+def _find_palm_body_id(model: mujoco.MjModel) -> int:
+    for name in ("palm", "right_palm_link", "hand"):
+        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+        if bid >= 0:
+            return bid
+    return -1
+
+
+def _read_ee_pose(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    ee_site_id: int,
+    palm_body_id: int,
+) -> np.ndarray:
+    """Return [x, y, z, qw, qx, qy, qz] of ee_site if present, else palm body."""
+    if ee_site_id >= 0:
+        pos = data.site_xpos[ee_site_id]
+        quat = np.zeros(4, dtype=np.float64)
+        mujoco.mju_mat2Quat(quat, data.site_xmat[ee_site_id])
+        return np.concatenate([pos, quat]).astype(np.float32)
+    if palm_body_id >= 0:
+        pos = data.xpos[palm_body_id]
+        quat = data.xquat[palm_body_id]
+        return np.concatenate([pos, quat]).astype(np.float32)
+    return np.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+
+
+def _pack_trajectory(
+    bundle: SceneBundle,
+    obs_qpos: list[np.ndarray],
+    obs_qvel: list[np.ndarray],
+    priv_obj_pos: list[np.ndarray],
+    actions_ctrl: list[np.ndarray],
+    ee_poses: list[np.ndarray],
+    gripper_states: list[list[float]],
+    timestamps_s: list[float],
+) -> dict[str, np.ndarray]:
+    """Pack backwards-compatible + researcher-grade trajectory arrays."""
+    m = bundle.model
+    t_len = len(obs_qpos)
+    joint_names = np.asarray(
+        [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, j) or f"j_{j}" for j in range(m.njnt)]
+    )
+    actuator_names = np.asarray(
+        [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_ACTUATOR, a) or f"a_{a}" for a in range(m.nu)]
+    )
+    return {
+        "observation_qpos": np.asarray(obs_qpos, dtype=np.float32).reshape(t_len, m.nq),
+        "observation_qvel": np.asarray(obs_qvel, dtype=np.float32).reshape(t_len, m.nv),
+        "privileged_obj_pos": np.asarray(priv_obj_pos, dtype=np.float32).reshape(t_len, 3),
+        "action_ctrl": np.asarray(actions_ctrl, dtype=np.float32).reshape(t_len, m.nu),
+        "ee_pose": np.asarray(ee_poses, dtype=np.float32).reshape(t_len, 7),
+        "gripper_state": np.asarray(gripper_states, dtype=np.float32).reshape(t_len, 1),
+        "timestamps_s": np.asarray(timestamps_s, dtype=np.float32).reshape(t_len),
+        "dt": np.float32(20.0 * m.opt.timestep),
+        "robot_id": np.asarray(bundle.robot_id),
+        "joint_names": joint_names,
+        "actuator_names": actuator_names,
+    }
 
 
 def _execute_in_hand_rotation(
@@ -237,6 +302,8 @@ def _execute_in_hand_rotation(
         spindle_qadr = -1
         start_spindle_rad = 0.0
     floor_geom_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "floor")
+    ee_site_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "ee_site")
+    palm_body_id = _find_palm_body_id(m)
 
     palm_center_xy = np.array([0.015, 0.0], dtype=np.float64)
     init_pos = d.xpos[obj_body_id].copy()
@@ -308,8 +375,12 @@ def _execute_in_hand_rotation(
     renderer = mujoco.Renderer(m, height=height, width=width) if render_video else None
     frames: list[np.ndarray] = []
     obs_qpos: list[np.ndarray] = []
+    obs_qvel: list[np.ndarray] = []
     priv_obj_pos: list[np.ndarray] = []
     actions_ctrl: list[np.ndarray] = []
+    ee_poses: list[np.ndarray] = []
+    gripper_states: list[list[float]] = []
+    timestamps_s: list[float] = []
 
     chunk_yaw_deg = 0.0
     max_abs_chunk_yaw = 0.0
@@ -352,8 +423,12 @@ def _execute_in_hand_rotation(
 
                     if global_step % 20 == 0:
                         obs_qpos.append(d.qpos.copy())
+                        obs_qvel.append(d.qvel.copy())
                         priv_obj_pos.append(cur_pos.copy())
                         actions_ctrl.append(d.ctrl.copy())
+                        ee_poses.append(_read_ee_pose(m, d, ee_site_id, palm_body_id))
+                        gripper_states.append([float(wp.gripper_target)])
+                        timestamps_s.append(float(d.time))
 
                     if renderer is not None and global_step % render_every == 0:
                         cum_now = start_cum_yaw + chunk_yaw_deg
@@ -444,11 +519,16 @@ def _execute_in_hand_rotation(
         f"obj_contacts={obj_contact_steps}"
     )
 
-    trajectory = {
-        "observation_qpos": np.asarray(obs_qpos, dtype=np.float32),
-        "privileged_obj_pos": np.asarray(priv_obj_pos, dtype=np.float32),
-        "action_ctrl": np.asarray(actions_ctrl, dtype=np.float32),
-    }
+    trajectory = _pack_trajectory(
+        bundle=bundle,
+        obs_qpos=obs_qpos,
+        obs_qvel=obs_qvel,
+        priv_obj_pos=priv_obj_pos,
+        actions_ctrl=actions_ctrl,
+        ee_poses=ee_poses,
+        gripper_states=gripper_states,
+        timestamps_s=timestamps_s,
+    )
 
     return RolloutResult(
         sim_success=sim_success,
@@ -508,11 +588,46 @@ def execute_rollout(
     obs_post_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "obstacle_post")
     obstacle_geom_ids = {gid for gid in (obs_roof_id, obs_post_id) if gid >= 0}
     ee_site_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "ee_site")
+    palm_body_id = _find_palm_body_id(m)
     mocap_body_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "palm_mocap")
     mocap_id = m.body_mocapid[mocap_body_id] if mocap_body_id >= 0 else -1
 
     initial_obj_pos = d.xpos[obj_body_id].copy()
     initial_obj_z = float(initial_obj_pos[2])
+
+    # MimicGen-style multi-frame anchor lookup (built right after initial settle)
+    anchor_frames: dict[str, np.ndarray] = {}
+    for bid in range(m.nbody):
+        bname = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, bid)
+        if bname:
+            anchor_frames[bname] = d.xpos[bid].copy()
+    anchor_frames["target_object"] = initial_obj_pos.copy()
+    anchor_frames["world"] = np.zeros(3, dtype=np.float64)
+
+    task_info = bundle.extras.get("task", {})
+    if isinstance(task_info, dict):
+        if "zone_center" in task_info:
+            zc = np.asarray(task_info["zone_center"], dtype=np.float64)
+            for alias in ("target_pad", "pad", "zone", "bin", "bowl"):
+                anchor_frames[alias] = zc.copy()
+        if "lock_center" in task_info and "lock_top_z" in task_info:
+            lc = task_info["lock_center"]
+            anchor_frames["lock"] = np.array(
+                [lc[0], lc[1], task_info["lock_top_z"]], dtype=np.float64
+            )
+        if "hole_center" in task_info and "board_top_z" in task_info:
+            hc = task_info["hole_center"]
+            anchor_frames["hole"] = np.array(
+                [hc[0], hc[1], task_info["board_top_z"]], dtype=np.float64
+            )
+        if "sort_pads" in task_info and isinstance(task_info["sort_pads"], dict):
+            sort_pads = task_info["sort_pads"]
+            if "red" in sort_pads:
+                anchor_frames["red_pad"] = np.asarray(sort_pads["red"], dtype=np.float64)
+            if "blue" in sort_pads:
+                anchor_frames["blue_pad"] = np.asarray(sort_pads["blue"], dtype=np.float64)
+        if "screw_head" in task_info:
+            anchor_frames["screw"] = np.asarray(task_info["screw_head"], dtype=np.float64)
 
     # Build disabled DOF mask for Panda
     disabled_dof_mask = np.zeros(m.nv, dtype=bool)
@@ -522,11 +637,12 @@ def execute_rollout(
             disabled_dof_mask[m.jnt_dofadr[jid]] = True
 
     # Phase durations (sim seconds) and slow-motion playback factors
+    # Slower playback around grasp & close gives ~1fps video models 3-4 clear frames of jaw closing & lift-off
     phase_config = {
         "pre_grasp": {"duration": 0.8, "slowmo": 1.0},
-        "grasp": {"duration": 0.8, "slowmo": 0.50},
-        "close": {"duration": 0.5, "slowmo": 0.40},
-        "lift": {"duration": 1.1, "slowmo": 0.70},
+        "grasp": {"duration": 0.8, "slowmo": 0.35},
+        "close": {"duration": 0.65, "slowmo": 0.25},
+        "lift": {"duration": 1.1, "slowmo": 0.60},
     }
 
     renderer = mujoco.Renderer(m, height=height, width=width) if render_video else None
@@ -542,44 +658,122 @@ def execute_rollout(
     lift_threshold = 0.08  # 8 cm above initial resting height
 
     obs_qpos: list[np.ndarray] = []
+    obs_qvel: list[np.ndarray] = []
     priv_obj_pos: list[np.ndarray] = []
     actions_ctrl: list[np.ndarray] = []
+    ee_poses: list[np.ndarray] = []
+    gripper_states: list[list[float]] = []
+    timestamps_s: list[float] = []
 
     try:
-        for wp in waypoints:
-            cfg = phase_config.get(wp.phase, {"duration": 0.8, "slowmo": 1.0})
-            n_steps = max(1, int(round(cfg["duration"] / m.opt.timestep)))
+        num_wps = len(waypoints)
+        ee_local_offset = (
+            m.site_pos[ee_site_id].copy()
+            if (mocap_id >= 0 and ee_site_id >= 0)
+            else np.zeros(3, dtype=np.float64)
+        )
+        for wp_idx, wp in enumerate(waypoints):
+            cfg = phase_config.get(wp.phase, {"duration": 0.8, "slowmo": 0.6})
+            dur_s = float(np.clip(wp.duration_s, 0.4, 1.6)) if wp.duration_s else cfg["duration"]
+            if wp.phase == "lift":
+                dur_s = max(dur_s, 0.85)
+            is_final_release = (wp_idx == num_wps - 1) and (num_wps >= 5) and (wp.gripper_target <= 0.20)
+            if is_final_release:
+                dur_s = max(dur_s, 0.80)
+            n_steps = max(1, int(round(dur_s / m.opt.timestep)))
             sim_dt_per_frame = (1.0 / fps) * cfg["slowmo"]
             render_every = max(1, int(round(sim_dt_per_frame / m.opt.timestep)))
 
-            # Object-centric target pose anchored to initial object position
-            target_pos = initial_obj_pos + np.asarray(wp.position_offset, dtype=np.float64)
+            # Multi-frame target pose anchored to wp.reference_frame (default: "target_object")
+            ref_name = getattr(wp, "reference_frame", "target_object") or "target_object"
+            anchor_pos = anchor_frames.get(ref_name, initial_obj_pos)
+            target_pos = anchor_pos + np.asarray(wp.position_offset, dtype=np.float64)
             target_mat = _rpy_to_mat(wp.orientation_rpy)
             target_quat = _rpy_to_quat_wxyz(wp.orientation_rpy)
+            retract_pos = target_pos + np.array([0.0, 0.0, 0.06], dtype=np.float64)
 
-            # Pre-solve target joint configuration for Panda
-            q_start = d.ctrl[:7].copy() if robot_id == "franka_emika_panda" else None
-            q_goal = (
-                _solve_panda_ik(m, d.qpos, ee_site_id, target_pos, target_mat, disabled_dof_mask)
-                if robot_id == "franka_emika_panda"
-                else None
-            )
+            # Pre-solve K=4 Cartesian sub-waypoints for Panda (linear XYZ + geodesic SLERP orientation)
+            q_knots: list[np.ndarray] | None = None
+            q_retract: np.ndarray | None = None
+            n_sub = 4
+            if robot_id == "franka_emika_panda":
+                mujoco.mj_kinematics(m, d)
+                q_start = d.ctrl[:7].copy()
+                cur_ee_pos = d.site_xpos[ee_site_id].copy()
+                cur_ee_mat = d.site_xmat[ee_site_id].reshape(3, 3).copy()
+                delta_rotvec = Rotation.from_matrix(target_mat @ cur_ee_mat.T).as_rotvec()
 
-            # For Allegro mocap smooth interpolation
+                q_warm = d.qpos.copy()
+                q_knots = [q_start]
+                for k in range(1, n_sub + 1):
+                    alpha = k / float(n_sub)
+                    if k < n_sub:
+                        sub_pos = (1.0 - alpha) * cur_ee_pos + alpha * target_pos
+                        sub_mat = Rotation.from_rotvec(alpha * delta_rotvec).as_matrix() @ cur_ee_mat
+                        iters = 35
+                    else:
+                        sub_pos = target_pos
+                        sub_mat = target_mat
+                        iters = 80
+                    q_sol = _solve_panda_ik(
+                        m,
+                        q_warm,
+                        ee_site_id,
+                        sub_pos,
+                        sub_mat,
+                        disabled_dof_mask,
+                        max_iters=iters,
+                    )
+                    q_knots.append(q_sol)
+                    q_warm[:7] = q_sol
+                if is_final_release:
+                    q_retract = _solve_panda_ik(
+                        m,
+                        q_warm,
+                        ee_site_id,
+                        retract_pos,
+                        target_mat,
+                        disabled_dof_mask,
+                        max_iters=50,
+                    )
+
+            # For Allegro/Wuji mocap smooth interpolation (shift mocap so ee_site TCP lands on target_pos)
+            mocap_goal_pos = target_pos - target_mat @ ee_local_offset
+            mocap_retract_pos = retract_pos - target_mat @ ee_local_offset
             start_mocap_pos = d.mocap_pos[mocap_id].copy() if mocap_id >= 0 else None
             start_mocap_quat = d.mocap_quat[mocap_id].copy() if mocap_id >= 0 else None
 
             for step in range(n_steps):
-                # Smoothly ramp over first 75% of phase, hold last 25% for settling
-                frac = min(1.0, (step + 1) / (0.75 * n_steps))
+                if is_final_release:
+                    # First 60%: move to release target & open jaws cleanly; last 40%: lift open jaws +6cm clear
+                    split = int(0.60 * n_steps)
+                    if step < split:
+                        frac = min(1.0, (step + 1) / max(1.0, 0.45 * n_steps))
+                        ret_frac = 0.0
+                    else:
+                        frac = 1.0
+                        ret_frac = min(1.0, (step - split + 1) / max(1.0, 0.35 * n_steps))
+                else:
+                    # Smoothly ramp over first 75% of phase, hold last 25% for settling
+                    frac = min(1.0, (step + 1) / (0.75 * n_steps))
+                    ret_frac = 0.0
 
-                if robot_id == "franka_emika_panda" and q_start is not None and q_goal is not None:
-                    d.ctrl[:7] = (1.0 - frac) * q_start + frac * q_goal
+                if robot_id == "franka_emika_panda" and q_knots is not None:
+                    if ret_frac > 0.0 and q_retract is not None:
+                        d.ctrl[:7] = (1.0 - ret_frac) * q_knots[-1] + ret_frac * q_retract
+                    else:
+                        scaled = frac * n_sub
+                        seg = min(n_sub - 1, int(scaled))
+                        local_frac = scaled - seg
+                        d.ctrl[:7] = (1.0 - local_frac) * q_knots[seg] + local_frac * q_knots[seg + 1]
                     # Panda actuator8: 255 = open (0.04m), 0 = closed (0.0m)
                     d.ctrl[7] = float(np.clip((1.0 - wp.gripper_target) * 255.0, 0.0, 255.0))
                 else:
                     if mocap_id >= 0 and start_mocap_pos is not None and start_mocap_quat is not None:
-                        d.mocap_pos[mocap_id] = (1.0 - frac) * start_mocap_pos + frac * target_pos
+                        if ret_frac > 0.0:
+                            d.mocap_pos[mocap_id] = (1.0 - ret_frac) * mocap_goal_pos + ret_frac * mocap_retract_pos
+                        else:
+                            d.mocap_pos[mocap_id] = (1.0 - frac) * start_mocap_pos + frac * mocap_goal_pos
                         q_interp = (1.0 - frac) * start_mocap_quat + frac * target_quat
                         d.mocap_quat[mocap_id] = q_interp / (np.linalg.norm(q_interp) + 1e-8)
                     _set_allegro_fingers(m, d, wp.gripper_target, wp.finger_targets, disabled_set)
@@ -619,8 +813,12 @@ def execute_rollout(
                 # Record trajectory at 25 Hz
                 if step % 20 == 0:
                     obs_qpos.append(d.qpos.copy())
-                    priv_obj_pos.append(cur_pos.copy() if "cur_pos" in locals() else cur_obj_pos.copy())
+                    obs_qvel.append(d.qvel.copy())
+                    priv_obj_pos.append(cur_obj_pos.copy())
                     actions_ctrl.append(d.ctrl.copy())
+                    ee_poses.append(_read_ee_pose(m, d, ee_site_id, palm_body_id))
+                    gripper_states.append([float(wp.gripper_target)])
+                    timestamps_s.append(float(d.time))
 
                 # Render frame
                 if renderer is not None and step % render_every == 0:
@@ -635,9 +833,11 @@ def execute_rollout(
                     else:
                         status_tag = ""
                         badge_col = (15, 20, 28)
+                    grip_state = "CLOSED" if wp.gripper_target >= 0.5 else "OPEN"
+                    frame_tag = f" @{ref_name}" if ref_name != "target_object" else ""
                     side_img = _label_frame(
                         renderer.render(),
-                        f"{wp.phase.upper()} ({speed_tag}){status_tag}",
+                        f"{wp.phase.upper()}{frame_tag} ({speed_tag}) | GRIP:{grip_state}{status_tag}",
                         badge_color=badge_col,
                     )
                     renderer.update_scene(d, camera="top_cam")
@@ -696,11 +896,16 @@ def execute_rollout(
                 "obj_contact_steps": obj_contact_steps,
                 "video_frames": len(frames),
             }
-            trajectory = {
-                "observation_qpos": np.asarray(obs_qpos, dtype=np.float32),
-                "privileged_obj_pos": np.asarray(priv_obj_pos, dtype=np.float32),
-                "action_ctrl": np.asarray(actions_ctrl, dtype=np.float32),
-            }
+            trajectory = _pack_trajectory(
+                bundle=bundle,
+                obs_qpos=obs_qpos,
+                obs_qvel=obs_qvel,
+                priv_obj_pos=priv_obj_pos,
+                actions_ctrl=actions_ctrl,
+                ee_poses=ee_poses,
+                gripper_states=gripper_states,
+                timestamps_s=timestamps_s,
+            )
             return RolloutResult(
                 sim_success=sim_success,
                 telemetry_summary=telemetry_summary,
@@ -745,11 +950,16 @@ def execute_rollout(
         f"obj_contacts={obj_contact_steps} | table_collisions={table_collision_steps}{obs_str}"
     )
 
-    trajectory = {
-        "observation_qpos": np.asarray(obs_qpos, dtype=np.float32),
-        "privileged_obj_pos": np.asarray(priv_obj_pos, dtype=np.float32),
-        "action_ctrl": np.asarray(actions_ctrl, dtype=np.float32),
-    }
+    trajectory = _pack_trajectory(
+        bundle=bundle,
+        obs_qpos=obs_qpos,
+        obs_qvel=obs_qvel,
+        priv_obj_pos=priv_obj_pos,
+        actions_ctrl=actions_ctrl,
+        ee_poses=ee_poses,
+        gripper_states=gripper_states,
+        timestamps_s=timestamps_s,
+    )
 
     return RolloutResult(
         sim_success=sim_success,
@@ -786,5 +996,6 @@ def default_panda_waypoints() -> list[Waypoint]:
             position_offset=[0.0, 0.0, 0.18],
             orientation_rpy=[3.14159, 0.0, 1.5708],
             gripper_target=1.0,
+            duration_s=0.9,
         ),
     ]

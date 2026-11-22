@@ -37,6 +37,12 @@ ORIGIN = {"wonik_allegro": (0.0, 0.0), "wuji_hand": (0.0, 0.0), "franka_emika_pa
 
 FIXTURE_XY = {"target_pad": (0.0, -0.10), "bin": (0.0, -0.115), "nail_board": (0.0, -0.08), "lock": (0.0, -0.085),
               "shape_board": (0.0, -0.09), "screw_board": (0.0, -0.085), "cargo": (-0.02, 0.09), "bowl": (0.0, -0.10)}
+MOVABLE_ZONE_OUTER_HALF = {"target_pad": 0.045, "bin": 0.060, "bowl": 0.054}
+TABLE_GEOM_BY_ROBOT = {
+    "franka_emika_panda": ((0.52, 0.0), (0.28, 0.35)),
+    "wonik_allegro": ((0.0, 0.0), (0.20, 0.20)),
+    "wuji_hand": ((0.0, 0.0), (0.20, 0.20)),
+}
 GHOST_AIR_POS = (0.07, 0.12, 0.09)  # beside the hand, height above the table
 
 # Lock geometry (keyhole on top, vertical insertion)
@@ -98,9 +104,11 @@ def build_task_scene(
     disabled_joints: list[str] | None = None,
     clutter: list[str] | None = None,
     layout_seed: int | None = None,
+    fixture_xy_jitter: tuple[float, float] | None = None,
 ) -> SceneBundle:
     """`clutter`: extra library object ids to put on the table (multi-object scenes, any task).
     `layout_seed`: None = default layout; an int = reproducible shuffle of positions (+ yaw where safe).
+    `fixture_xy_jitter`: optional (dx, dy) shift in meters for movable tabletop zones (`target_pad`, `bin`, `bowl`).
     Explicit `object_xy` / `object_yaw_deg` override the shuffle for the target."""
     problem = check_combo(robot_id, object_id, task_id, clutter)
     if problem:
@@ -109,8 +117,65 @@ def build_task_scene(
     p = resolve_params(task, obj, params)
     ox, oy = ORIGIN[robot_id]
 
-    def assemble(layout: Layout) -> SceneBundle:
+    t_center, t_half = TABLE_GEOM_BY_ROBOT[robot_id]
+    shifted_fixture_xy: tuple[float, float] | None = None
+    fx_outer_half = MOVABLE_ZONE_OUTER_HALF.get(task.fixture or "", 0.0)
+    if fixture_xy_jitter is not None and task.fixture in MOVABLE_ZONE_OUTER_HALF:
+        base_fx, base_fy = FIXTURE_XY[task.fixture]
+        margin = fx_outer_half + 0.005
+        fx_cx = float(
+            np.clip(
+                ox + base_fx + float(fixture_xy_jitter[0]),
+                t_center[0] - t_half[0] + margin,
+                t_center[0] + t_half[0] - margin,
+            )
+        )
+        fx_cy = float(
+            np.clip(
+                oy + base_fy + float(fixture_xy_jitter[1]),
+                t_center[1] - t_half[1] + margin,
+                t_center[1] + t_half[1] - margin,
+            )
+        )
+        shifted_fixture_xy = (fx_cx, fx_cy)
+
+    obj_horiz_r = max(
+        obj.half_extents[0],
+        obj.half_extents[2] if task.initial_pose == "lying" else obj.half_extents[1],
+    ) * size_scale
+
+    def _nudge_rel_clear_of_fixture(rel_xy: tuple[float, float]) -> tuple[float, float]:
+        if shifted_fixture_xy is None or object_xy is not None:
+            return rel_xy
+        wx, wy = ox + rel_xy[0], oy + rel_xy[1]
+        fx_cx, fx_cy = shifted_fixture_xy
+        min_sep = fx_outer_half + obj_horiz_r + 0.015
+        if abs(wx - fx_cx) < min_sep and abs(wy - fx_cy) < min_sep:
+            obj_margin = obj_horiz_r + 0.012
+            # Push along +Y (or -Y if +Y has less room on table) so target starts outside the shifted zone
+            cand_up = fx_cy + min_sep
+            cand_dn = fx_cy - min_sep
+            y_hi = t_center[1] + t_half[1] - obj_margin
+            y_lo = t_center[1] - t_half[1] + obj_margin
+            if cand_up <= y_hi:
+                wy = cand_up
+            elif cand_dn >= y_lo:
+                wy = cand_dn
+            else:
+                wx = float(
+                    np.clip(
+                        fx_cx + (min_sep if wx >= fx_cx else -min_sep),
+                        t_center[0] - t_half[0] + obj_margin,
+                        t_center[0] + t_half[0] - obj_margin,
+                    )
+                )
+            return (wx - ox, wy - oy)
+        return rel_xy
+
+    def assemble(layout: Layout, force_clear_fixture: bool = False) -> SceneBundle:
         rel, extras, multi_info = layout.target_xy, layout.extras, layout.info
+        if force_clear_fixture:
+            rel = _nudge_rel_clear_of_fixture(rel)
         xy = (ox + rel[0], oy + rel[1])
 
         def populate(spec: mujoco.MjSpec, _robot: str, top_z: float, _center, _half):
@@ -136,7 +201,20 @@ def build_task_scene(
                 hx, hy, _ = (v * size_scale for v in obj.half_extents)
                 obj_spec = ObjectSpec("box", [hx, hy, hz], list(body.pos), _quat_wxyz(r0), list(obj.rgba), obj.mass_kg * size_scale**3)
 
-            info = _add_fixture_and_targets(spec, obj, task, p, xy, (ox, oy), top_z, r0, size_scale)
+            info = _add_fixture_and_targets(
+                spec,
+                obj,
+                task,
+                p,
+                xy,
+                (ox, oy),
+                top_z,
+                r0,
+                size_scale,
+                fixture_xy_override=shifted_fixture_xy,
+            )
+            if shifted_fixture_xy is not None and fixture_xy_jitter is not None:
+                info["fixture_xy_jitter"] = [round(float(fixture_xy_jitter[0]), 4), round(float(fixture_xy_jitter[1]), 4)]
             info.update(_add_special(spec, obj, xy, top_z, size_scale))
             info.update(multi_info)
             info.update(layout_seed=layout.seed, target_xy_rel=[round(v, 4) for v in rel], target_yaw_deg=round(layout.target_yaw_deg, 1))
@@ -175,17 +253,61 @@ def build_task_scene(
                            object_xy=object_xy, object_yaw_deg=object_yaw_deg)
 
     if layout_seed is None:
-        return assemble(layout_for(None))
-    # Shuffled: the sampler only knows table/fixture/object footprints, not the robot's start pose, so re-draw
-    # (deterministically: next draw of the same seed) if anything starts in contact with the robot.
-    tries = int(load_config().get("layout", {}).get("max_redraws", 8))
+        return assemble(layout_for(None), force_clear_fixture=True)
+    # Shuffled: the sampler only knows table/fixture/object footprints, not the robot's start pose or shifted fixture,
+    # so re-draw (deterministically: next draw of the same seed) if anything starts in contact or overlaps shifted zone.
+    base_tries = int(load_config().get("layout", {}).get("max_redraws", 8))
+    tries = max(base_tries, 20) if shifted_fixture_xy is not None else base_tries
     for attempt in range(tries):
-        bundle = assemble(layout_for(layout_seed, attempt))
-        if not _robot_touches_objects(bundle):
+        bundle = assemble(layout_for(layout_seed, attempt), force_clear_fixture=False)
+        if not _robot_touches_objects(bundle) and not _shifted_fixture_overlaps(
+            bundle, shifted_fixture_xy, fx_outer_half, obj_horiz_r
+        ):
             return bundle
-    bundle = assemble(layout_for(None))  # give up: default layout (always clear), keep the requested seed on record
+    bundle = assemble(layout_for(None), force_clear_fixture=True)  # give up: default layout (nudged clear of shifted fixture)
     bundle.extras["task"].update(layout_seed=layout_seed, layout_note=f"shuffle failed after {tries} draws; default layout used")
     return bundle
+
+
+def _shifted_fixture_overlaps(
+    bundle: SceneBundle,
+    shifted_fixture_xy: tuple[float, float] | None,
+    fx_outer_half: float,
+    obj_horiz_r: float,
+) -> bool:
+    """True if target_object or any extra/distractor body overlaps the shifted fixture zone."""
+    if shifted_fixture_xy is None:
+        return False
+    m, d = bundle.model, bundle.data
+    fx_cx, fx_cy = shifted_fixture_xy
+    t = bundle.extras["task"]
+
+    obj_bid = m.body("target_object").id
+    ox_w, oy_w = float(d.xpos[obj_bid, 0]), float(d.xpos[obj_bid, 1])
+    min_obj_sep = fx_outer_half + obj_horiz_r + 0.012
+    if abs(ox_w - fx_cx) < min_obj_sep and abs(oy_w - fx_cy) < min_obj_sep:
+        return True
+
+    other_bodies = [*(e["body"] for e in t.get("extras", [])), *t.get("distractors", [])]
+    for bname in other_bodies:
+        bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, bname)
+        if bid < 0:
+            continue
+        bx, by = float(d.xpos[bid, 0]), float(d.xpos[bid, 1])
+        b_r = max(
+            (float(max(m.geom_size[g, 0], m.geom_size[g, 1])) for g in range(m.ngeom) if m.geom_bodyid[g] == bid),
+            default=0.025,
+        )
+        if abs(bx - fx_cx) < fx_outer_half + b_r + 0.010 and abs(by - fx_cy) < fx_outer_half + b_r + 0.010:
+            return True
+
+    for i in range(d.ncon):
+        c = d.contact[i]
+        bnames = [m.body(int(m.geom_bodyid[g])).name for g in (c.geom1, c.geom2)]
+        if any(b.startswith(("fixture_bin", "fixture_bowl")) for b in bnames):
+            if any(b in ("target_object", *other_bodies) for b in bnames):
+                return True
+    return False
 
 
 def _robot_touches_objects(bundle: SceneBundle) -> bool:
@@ -248,6 +370,8 @@ def _build_wuji_scene(populate, disabled_joints: list[str] | None) -> SceneBundl
     fj.type = mujoco.mjtJoint.mjJNT_FREE
     site = palm.add_site()
     site.name = "ee_site"
+    # Place TCP at the opposed thumb-and-fingers pinch center so [0, 0, 0] centers fingers on the object
+    site.pos = [0.055, 0.005, 0.115]
     site.size = [0.008, 0.008, 0.008]
     site.rgba = [0.1, 0.9, 0.1, 0.6]
     mocap = spec.worldbody.add_body()
@@ -268,7 +392,22 @@ def _build_wuji_scene(populate, disabled_joints: list[str] | None) -> SceneBundl
     obj_spec, extras = populate(spec, "wuji_hand", top_z, center, half)
     _add_cameras(spec, "wonik_allegro")  # same workspace layout as the Allegro scene
     model = spec.compile()
+    # Give Wuji finger servos realistic torque authority & 4D torsional pad friction
+    model.actuator_gainprm[:, 0] *= 4.5
+    model.actuator_biasprm[:, 1] *= 4.5
+    for gid in range(model.ngeom):
+        if "right_finger" in (model.body(int(model.geom_bodyid[gid])).name or ""):
+            model.geom_condim[gid] = 4
+            model.geom_friction[gid] = [1.3, 0.01, 0.0005]
     data = mujoco.MjData(model)
+    # Initialize thumb CMC joint1 in opposed downward posture so hand starts ready to pinch
+    th_opp_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "right_finger1_joint1")
+    if th_opp_jid >= 0:
+        lo, hi = model.jnt_range[th_opp_jid]
+        q_opp = lo + 0.88 * (hi - lo)
+        data.qpos[model.jnt_qposadr[th_opp_jid]] = q_opp
+        if model.nu > 0:
+            data.ctrl[0] = q_opp
     for jname in disabled_joints or []:  # lock like scene_builder does
         jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, jname)
         if jid >= 0:
@@ -398,12 +537,25 @@ def _ring(parent, prefix: str, center, inner: float, wall: float, height: float,
                     (wall / 2, half_len, height / 2), rgba, bits=bits, quat=_quat_wxyz(Rotation.from_euler("z", a)))
 
 
-def _add_fixture_and_targets(spec, obj: ObjectDef, task: TaskPreset, p, xy, origin, top_z, r0: Rotation, scale) -> dict[str, Any]:
+def _add_fixture_and_targets(
+    spec,
+    obj: ObjectDef,
+    task: TaskPreset,
+    p,
+    xy,
+    origin,
+    top_z,
+    r0: Rotation,
+    scale,
+    fixture_xy_override: tuple[float, float] | None = None,
+) -> dict[str, Any]:
     info: dict[str, Any] = {"fixture": task.fixture}
     fx = task.fixture
     wb = spec.worldbody
 
     def at(name: str) -> tuple[float, float]:
+        if fixture_xy_override is not None and name in MOVABLE_ZONE_OUTER_HALF:
+            return fixture_xy_override
         return origin[0] + FIXTURE_XY[name][0], origin[1] + FIXTURE_XY[name][1]
 
     if fx == "target_pad":

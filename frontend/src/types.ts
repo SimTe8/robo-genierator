@@ -2,11 +2,13 @@
  * Shared TypeScript contracts matching backend/schemas.py.
  */
 
-export type RobotId = 'franka_emika_panda' | 'wonik_allegro';
+export type RobotId = 'franka_emika_panda' | 'wonik_allegro' | 'wuji_hand';
 
 export type DecisionType = 'ACCEPT_TRAJECTORY' | 'REFINE_GRASP' | 'GIVE_UP';
 
 export type FeedbackMode = 'one_shot' | 'text_only' | 'video';
+
+export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high';
 
 export type TaskTypeOverride = 'auto' | 'pick_and_lift' | 'obstacle_grasp' | 'in_hand_rotation' | 'in_hand_spindle';
 
@@ -15,6 +17,7 @@ export type ObjectShapeOverride = 'auto' | 'box' | 'cylinder' | 'sphere';
 export interface Waypoint {
   phase: 'pre_grasp' | 'grasp' | 'close' | 'lift';
   position_offset: [number, number, number];
+  reference_frame?: string;
   orientation_rpy: [number, number, number];
   gripper_target: number;
   duration_s?: number;
@@ -128,6 +131,7 @@ export interface PlannerSettings {
   feedback_mode: FeedbackMode;
   planner_model: string;
   critic_model: string;
+  thinking_level: ThinkingLevel;
   scene_seed: number;
   disabled_joints: string[];
   chunk_step_deg: number | null;
@@ -141,6 +145,7 @@ export const DEFAULT_PLANNER_SETTINGS: PlannerSettings = {
   feedback_mode: 'video',
   planner_model: 'models/gemini-4-neon',
   critic_model: 'models/gemini-4-hydrogen',
+  thinking_level: 'medium',
   scene_seed: 42,
   disabled_joints: [],
   chunk_step_deg: null,

@@ -1,8 +1,8 @@
-import { ChevronDown, Dices, RotateCcw, ShieldAlert, Sliders } from 'lucide-react';
+import { Brain, ChevronDown, Dices, RotateCcw, ShieldAlert, Sliders } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '../lib/cn';
 import { DEFAULT_PLANNER_SETTINGS } from '../types';
-import type { FeedbackMode, ObjectShapeOverride, PlannerSettings, TaskTypeOverride } from '../types';
+import type { FeedbackMode, ObjectShapeOverride, PlannerSettings, TaskTypeOverride, ThinkingLevel } from '../types';
 import { Panel, Segmented } from './ui';
 
 const GEMINI_MODELS = [
@@ -16,6 +16,13 @@ const FEEDBACK_OPTIONS: { value: FeedbackMode; label: string }[] = [
   { value: 'video', label: 'Video Critic' },
   { value: 'text_only', label: 'Text Only' },
   { value: 'one_shot', label: 'One-Shot' },
+];
+
+const THINKING_OPTIONS: { value: ThinkingLevel; label: string }[] = [
+  { value: 'minimal', label: 'Minimal' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
 ];
 
 const TASK_TYPE_OPTIONS: { value: TaskTypeOverride; label: string }[] = [
@@ -48,15 +55,29 @@ const FAULT_PRESETS: Record<string, { label: string; joints: string[] }[]> = {
     { label: 'Disable Index Base', joints: ['ffj1'] },
   ],
   wuji_hand: [
-    { label: 'Disable Middle Finger', joints: ['mfj1', 'mfj2'] },
-    { label: 'Disable Ring Finger', joints: ['rfj1', 'rfj2'] },
+    { label: 'Disable Middle Finger', joints: ['right_finger3_joint1', 'right_finger3_joint3'] },
+    { label: 'Disable Ring & Little', joints: ['right_finger4_joint1', 'right_finger5_joint1'] },
+    { label: 'Lock Thumb Opposition', joints: ['right_finger1_joint2'] },
   ],
 };
 
 const ROBOT_JOINTS: Record<string, string[]> = {
   franka_emika_panda: ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6', 'joint7'],
   wonik_allegro: ['ffj0', 'ffj1', 'ffj2', 'mfj0', 'mfj1', 'mfj2', 'rfj0', 'rfj1', 'rfj2', 'thj0', 'thj1', 'thj2'],
-  wuji_hand: ['ffj1', 'ffj2', 'mfj1', 'mfj2', 'rfj1', 'rfj2', 'thj1', 'thj2'],
+  wuji_hand: [
+    'right_finger1_joint1',
+    'right_finger1_joint2',
+    'right_finger1_joint3',
+    'right_finger1_joint4',
+    'right_finger2_joint1',
+    'right_finger2_joint3',
+    'right_finger3_joint1',
+    'right_finger3_joint3',
+    'right_finger4_joint1',
+    'right_finger4_joint3',
+    'right_finger5_joint1',
+    'right_finger5_joint3',
+  ],
 };
 
 export function PlannerControls({
@@ -213,6 +234,29 @@ export function PlannerControls({
             ))}
           </select>
         </label>
+      </div>
+
+      {/* Thinking budget selector */}
+      <div className="mt-3 flex flex-col justify-between gap-2.5 rounded-2xl border border-line/80 bg-panel-2/45 p-3.5 sm:flex-row sm:items-center">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <Brain className="size-3.5 text-gemini-sky" />
+            <span className="text-xs font-medium text-fg">Planner thinking budget</span>
+            <span className="rounded bg-panel-3 px-1.5 py-px font-mono text-[10px] text-gemini-sky">
+              {settings.thinking_level}
+            </span>
+          </div>
+          <p className="mt-0.5 text-[11px] leading-snug text-muted">
+            Controls Gemini 4 reasoning budget to balance multi-step planning depth vs. latency
+          </p>
+        </div>
+        <div className="shrink-0">
+          <Segmented
+            value={settings.thinking_level}
+            options={THINKING_OPTIONS}
+            onChange={(v) => patch({ thinking_level: v })}
+          />
+        </div>
       </div>
 
       {/* Advanced & Stress-Test Controls toggle */}

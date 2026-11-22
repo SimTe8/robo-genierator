@@ -85,6 +85,11 @@ def _run_one_job(job: BenchJob) -> dict:
                 disabled_joints=req.disabled_joints,
                 target_rotation_deg=req.target_rotation_deg,
                 num_episodes=20,
+                library_object_id=req.library_object_id,
+                library_task_id=req.library_task_id,
+                library_task_params=req.library_task_params,
+                library_clutter=req.library_clutter,
+                base_layout_seed=req.library_layout_seed,
             )
             dr_info = {
                 "passed": dr.passed_episodes,
@@ -94,12 +99,17 @@ def _run_one_job(job: BenchJob) -> dict:
                 "exported_count": len(dr.exported_paths),
             }
 
+        task_key = (
+            f"wuji_{req.library_task_id}"
+            if (req.robot_id == "wuji_hand" and req.library_task_id)
+            else (req.library_task_id or req.task_type)
+        )
         return {
             "suite": job.suite,
             "label": job.label,
             "run_id": summary.run_id,
             "robot_id": req.robot_id,
-            "task_type": req.task_type,
+            "task_type": task_key,
             "scene_seed": req.scene_seed,
             "disabled_joints": req.disabled_joints,
             "feedback_mode": req.feedback_mode,
@@ -182,11 +192,11 @@ def build_jobs(quick: bool = False) -> list[BenchJob]:
     jobs: list[BenchJob] = []
 
     # Unseen evaluation seeds (never used during development; dev used seed=42)
-    obs_seeds = [101, 102, 103] if quick else [101, 102, 103, 104]
-    fault_seeds = [201, 202] if quick else [201, 202, 203]
+    obs_seeds = [101, 102] if quick else [101, 102, 103, 104]
+    fault_seeds = [201] if quick else [201, 202, 203]
     spindle_seeds = [301] if quick else [301, 302]
 
-    # --- SUITE 1: 3-Arm Ablation (One-Shot vs Text-Only vs Video) with Neon + Hydrogen ---
+    # --- SUITE 1: 3-Arm Ablation (One-Shot vs Text-Only vs Video) across 3 Robots & Multi-Object Tasks ---
     for seed in obs_seeds:
         for mode in ("one_shot", "text_only", "video"):
             jobs.append(
@@ -202,6 +212,7 @@ def build_jobs(quick: bool = False) -> list[BenchJob]:
                         feedback_mode=mode,
                         planner_model="models/gemini-4-neon",
                         critic_model="models/gemini-4-hydrogen",
+                        thinking_level="medium",
                     ).model_dump(),
                     run_dr=(mode == "video" and seed == obs_seeds[0]),
                 )
@@ -223,6 +234,7 @@ def build_jobs(quick: bool = False) -> list[BenchJob]:
                         feedback_mode=mode,
                         planner_model="models/gemini-4-neon",
                         critic_model="models/gemini-4-hydrogen",
+                        thinking_level="medium",
                     ).model_dump(),
                     run_dr=(mode == "video" and seed == fault_seeds[0]),
                 )
@@ -244,12 +256,82 @@ def build_jobs(quick: bool = False) -> list[BenchJob]:
                         feedback_mode=mode,
                         planner_model="models/gemini-4-neon",
                         critic_model="models/gemini-4-hydrogen",
+                        thinking_level="medium",
                     ).model_dump(),
+                    run_dr=(mode == "video" and seed == spindle_seeds[0]),
                 )
             )
 
-    # --- SUITE 2: Planner-Critic Model-Duo Comparison (on unseen obstacle_grasp seeds 101, 102) ---
-    # Note: Neon + Hydrogen on 101, 102 is already run in Suite 1 and combined in aggregation!
+    # Multi-object 2-body stacking (MimicGen-style reference_frame="base_block")
+    for mode in ("one_shot", "text_only", "video"):
+        jobs.append(
+            BenchJob(
+                suite="ablation",
+                label=f"panda_stack_on_block_seed401_{mode}",
+                request_dict=RunRequest(
+                    task_prompt="Pick up the cube and stack it cleanly centered on top of the base block, then release it.",
+                    task_type="pick_and_lift",
+                    robot_id="franka_emika_panda",
+                    scene_seed=401,
+                    library_object_id="cube",
+                    library_task_id="stack_on_block",
+                    max_attempts=3,
+                    feedback_mode=mode,
+                    planner_model="models/gemini-4-neon",
+                    critic_model="models/gemini-4-hydrogen",
+                    thinking_level="medium",
+                ).model_dump(),
+                run_dr=(mode == "video"),
+            )
+        )
+
+    # Multi-frame pick-and-place on target pad (simultaneous mug + pad randomization)
+    for mode in ("one_shot", "text_only", "video"):
+        jobs.append(
+            BenchJob(
+                suite="ablation",
+                label=f"panda_mug_place_on_pad_seed402_{mode}",
+                request_dict=RunRequest(
+                    task_prompt="Pick up the mug, place it upright on the green target pad, and release it.",
+                    task_type="pick_and_lift",
+                    robot_id="franka_emika_panda",
+                    scene_seed=402,
+                    library_object_id="mug",
+                    library_task_id="place_on_pad",
+                    max_attempts=3,
+                    feedback_mode=mode,
+                    planner_model="models/gemini-4-neon",
+                    critic_model="models/gemini-4-hydrogen",
+                    thinking_level="medium",
+                ).model_dump(),
+                run_dr=(mode == "video"),
+            )
+        )
+
+    # 20-DoF 5-finger Wuji hand tabletop grasp & lift
+    for mode in ("one_shot", "text_only", "video"):
+        jobs.append(
+            BenchJob(
+                suite="ablation",
+                label=f"wuji_20dof_pick_lift_seed501_{mode}",
+                request_dict=RunRequest(
+                    task_prompt="Pick up the cube with the 5-finger Wuji hand and lift it at least 10 cm above the table.",
+                    task_type="pick_and_lift",
+                    robot_id="wuji_hand",
+                    scene_seed=501,
+                    library_object_id="cube",
+                    library_task_id="pick_lift",
+                    max_attempts=3,
+                    feedback_mode=mode,
+                    planner_model="models/gemini-4-neon",
+                    critic_model="models/gemini-4-hydrogen",
+                    thinking_level="medium",
+                ).model_dump(),
+                run_dr=(mode == "video"),
+            )
+        )
+
+    # --- SUITE 2: Planner-Critic Model-Duo Comparison (on unseen obstacle_grasp seeds) ---
     duo_seeds = [101] if quick else [101, 102]
     extra_duos = [
         ("models/gemini-4-carbon", "models/gemini-4-hydrogen"),
@@ -271,6 +353,7 @@ def build_jobs(quick: bool = False) -> list[BenchJob]:
                         feedback_mode="video",
                         planner_model=planner_m,
                         critic_model=critic_m,
+                        thinking_level="medium",
                     ).model_dump(),
                 )
             )
@@ -290,6 +373,7 @@ def build_jobs(quick: bool = False) -> list[BenchJob]:
                 feedback_mode="video",
                 planner_model="models/gemini-4-neon",
                 critic_model="models/gemini-4-hydrogen",
+                thinking_level="medium",
             ).model_dump(),
         )
     )
@@ -307,6 +391,7 @@ def build_jobs(quick: bool = False) -> list[BenchJob]:
                 feedback_mode="video",
                 planner_model="models/gemini-4-neon",
                 critic_model="models/gemini-4-hydrogen",
+                thinking_level="medium",
             ).model_dump(),
         )
     )
@@ -322,7 +407,8 @@ def build_report(records: list[dict], elapsed_s: float) -> dict:
     }
 
     summary_by_task_and_arm: dict[str, dict] = {}
-    for task in ("obstacle_grasp", "pick_and_lift", "in_hand_spindle"):
+    seen_tasks = list(dict.fromkeys(r["task_type"] for r in ablation))
+    for task in seen_tasks:
         summary_by_task_and_arm[task] = {
             mode: _aggregate(
                 [r for r in ablation if r["task_type"] == task and r["feedback_mode"] == mode]

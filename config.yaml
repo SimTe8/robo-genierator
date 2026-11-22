@@ -6,8 +6,9 @@ wuji_mjcf: assets/wuji-hand-description/mjcf/right.xml  # MIT, wuji-technology/w
 models:
   # Confirm exact IDs at kickoff; only agents/gemini_client.py should read these.
   planner: gemini-4-neon
-  planner_thinking: high
+  planner_thinking: medium         # options: minimal | low | medium | high
   critic: gemini-4-hydrogen
+  decisions_gate: gemini-decision-1
   fallback_planner: gemini-4-argon
   # Side quest: text prompt -> new object for the library (structured JSON output). Confirm IDs at kickoff.
   asset_generator: gemini-4-neon

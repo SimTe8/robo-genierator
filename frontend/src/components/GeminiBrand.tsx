@@ -1,4 +1,4 @@
-import { Calendar, ExternalLink, MapPin, Sparkles, X } from 'lucide-react';
+import { Calendar, ExternalLink, GitBranch, MapPin, Sparkles, X } from 'lucide-react';
 import { useEffect, useId } from 'react';
 import { cn } from '../lib/cn';
 
@@ -165,9 +165,10 @@ export function HackathonFooter({ onOpenModal }: { onOpenModal: () => void }) {
             <span className="text-faint">· Cerebral Valley · Nov 21, 2026</span>
           </span>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="hidden font-mono text-[10px] tracking-[0.2em] text-faint sm:inline">
-            BUILD / EXPERIMENT / SHIP
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-faint">
+            <GitBranch className="size-3 text-gemini-sky/80" />
+            Open-Source Robotics Demonstration Synthesis · MuJoCo 4 + Gemini 4
           </span>
           <span className="rounded-full border border-line bg-panel px-2.5 py-0.5 text-[10px] text-muted">
             Element 119 · Multimodal Closed Loop

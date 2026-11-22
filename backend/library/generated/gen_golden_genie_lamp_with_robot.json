@@ -1,0 +1,294 @@
+{
+  "object_id": "gen_golden_genie_lamp_with_robot",
+  "prompt": "a golden genie lamp with a robot coming out",
+  "model": "gemini-4-neon",
+  "created_at": "2026-11-21T17:45:28",
+  "asset": {
+    "name": "Golden genie lamp with robot",
+    "description": "A decorative golden genie lamp figurine with a small boxy robot emerging on a cyan plume from its spout, offering distinct graspable features at both ends.",
+    "grasp_note": "Grasp firmly around the bulbous golden lamp body or hook fingers through the rear handle while avoiding bumping the protruding robot arms.",
+    "mass_kg": 0.32,
+    "rgba": [
+      0.85,
+      0.68,
+      0.18,
+      1.0
+    ],
+    "yaw_symmetry_deg": 360.0,
+    "physics": {
+      "material": "brass and painted resin",
+      "fragility": "medium",
+      "deformability": "rigid",
+      "transparency": "opaque",
+      "contents": "none",
+      "can_contain_liquid": false,
+      "sealed": true
+    },
+    "parts": [
+      {
+        "kind": "capsule",
+        "size": [
+          0.006,
+          0.014
+        ],
+        "pos": [
+          -0.059,
+          0.0,
+          -0.021
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": "handle",
+        "rgba": [
+          0.85,
+          0.68,
+          0.18,
+          1.0
+        ]
+      },
+      {
+        "kind": "capsule",
+        "size": [
+          0.005,
+          0.012
+        ],
+        "pos": [
+          -0.047,
+          0.0,
+          -0.017
+        ],
+        "axis": "x",
+        "yaw_deg": 0.0,
+        "name": null,
+        "rgba": [
+          0.85,
+          0.68,
+          0.18,
+          1.0
+        ]
+      },
+      {
+        "kind": "capsule",
+        "size": [
+          0.005,
+          0.012
+        ],
+        "pos": [
+          -0.047,
+          0.0,
+          -0.035
+        ],
+        "axis": "x",
+        "yaw_deg": 0.0,
+        "name": null,
+        "rgba": [
+          0.85,
+          0.68,
+          0.18,
+          1.0
+        ]
+      },
+      {
+        "kind": "cylinder",
+        "size": [
+          0.028,
+          0.006
+        ],
+        "pos": [
+          -0.003,
+          0.0,
+          -0.055
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": "base",
+        "rgba": [
+          0.8,
+          0.62,
+          0.15,
+          1.0
+        ]
+      },
+      {
+        "kind": "ellipsoid",
+        "size": [
+          0.044,
+          0.028,
+          0.022
+        ],
+        "pos": [
+          -0.003,
+          0.0,
+          -0.031
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": "body",
+        "rgba": [
+          0.88,
+          0.71,
+          0.2,
+          1.0
+        ]
+      },
+      {
+        "kind": "sphere",
+        "size": [
+          0.011
+        ],
+        "pos": [
+          -0.007,
+          0.0,
+          -0.007
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": "lid",
+        "rgba": [
+          0.92,
+          0.76,
+          0.24,
+          1.0
+        ]
+      },
+      {
+        "kind": "capsule",
+        "size": [
+          0.008,
+          0.016
+        ],
+        "pos": [
+          0.041,
+          0.0,
+          -0.023
+        ],
+        "axis": "x",
+        "yaw_deg": 0.0,
+        "name": "spout",
+        "rgba": [
+          0.85,
+          0.68,
+          0.18,
+          1.0
+        ]
+      },
+      {
+        "kind": "capsule",
+        "size": [
+          0.007,
+          0.016
+        ],
+        "pos": [
+          0.055,
+          0.0,
+          -0.003
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": "plume",
+        "rgba": [
+          0.25,
+          0.8,
+          0.9,
+          1.0
+        ]
+      },
+      {
+        "kind": "box",
+        "size": [
+          0.014,
+          0.016,
+          0.014
+        ],
+        "pos": [
+          0.045,
+          0.0,
+          0.029
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": "robot_torso",
+        "rgba": [
+          0.68,
+          0.74,
+          0.8,
+          1.0
+        ]
+      },
+      {
+        "kind": "capsule",
+        "size": [
+          0.0045,
+          0.031
+        ],
+        "pos": [
+          0.045,
+          0.0,
+          0.031
+        ],
+        "axis": "y",
+        "yaw_deg": 0.0,
+        "name": "robot_arms",
+        "rgba": [
+          0.42,
+          0.47,
+          0.54,
+          1.0
+        ]
+      },
+      {
+        "kind": "box",
+        "size": [
+          0.011,
+          0.013,
+          0.01
+        ],
+        "pos": [
+          0.043,
+          0.0,
+          0.051
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": "robot_head",
+        "rgba": [
+          0.74,
+          0.8,
+          0.86,
+          1.0
+        ]
+      },
+      {
+        "kind": "box",
+        "size": [
+          0.002,
+          0.009,
+          0.003
+        ],
+        "pos": [
+          0.054,
+          0.0,
+          0.052
+        ],
+        "axis": "z",
+        "yaw_deg": 0.0,
+        "name": "robot_visor",
+        "rgba": [
+          0.1,
+          0.9,
+          1.0,
+          1.0
+        ]
+      }
+    ],
+    "buttons": [],
+    "tasks": [
+      "pick_by_part",
+      "reorient_to_target",
+      "place_on_pad",
+      "turn_part_to_hand",
+      "stack_on_block"
+    ]
+  },
+  "warnings": []
+}

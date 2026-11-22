@@ -125,6 +125,12 @@ def main() -> None:
     )
     parser.add_argument("--mode", choices=["one_shot", "text_only", "video"], default="video")
     parser.add_argument("--planner", type=str, default="models/gemini-4-neon")
+    parser.add_argument(
+        "--thinking",
+        choices=["minimal", "low", "medium", "high"],
+        default="medium",
+        help="Gemini 4 ThinkingConfig level for the Planner (minimal | low | medium | high).",
+    )
     parser.add_argument("--critic", type=str, default="models/gemini-4-hydrogen")
     parser.add_argument(
         "--dr-episodes",
@@ -177,13 +183,14 @@ def main() -> None:
         chunk_step_deg=args.chunk_deg,
         feedback_mode=args.mode,
         planner_model=args.planner,
+        thinking_level=args.thinking,
         critic_model=args.critic,
     )
 
     print(
         f"Starting closed loop | task={req.task_type} robot={req.robot_id} seed={req.scene_seed} "
         f"disabled={req.disabled_joints} mode={req.feedback_mode} "
-        f"planner={req.planner_model} critic={req.critic_model}"
+        f"planner={req.planner_model} thinking={req.thinking_level} critic={req.critic_model}"
     )
 
     spinner = StageSpinner()
@@ -240,6 +247,7 @@ def main() -> None:
             library_task_id=req.library_task_id,
             library_task_params=req.library_task_params,
             library_clutter=req.library_clutter,
+            base_layout_seed=req.library_layout_seed,
             is_custom_prompt=req.is_custom_prompt,
         )
         print(

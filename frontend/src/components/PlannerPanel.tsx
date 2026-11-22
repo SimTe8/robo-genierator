@@ -1,9 +1,19 @@
-import { ChevronDown, CircleAlert, CircleCheck, CircleX, Clock, Cpu, Film, Sparkles, Terminal } from 'lucide-react';
+import { ChevronDown, CircleAlert, CircleCheck, CircleX, Clock, Cpu, Download, Film, Sparkles, Terminal } from 'lucide-react';
 import { cn } from '../lib/cn';
 import type { DecisionType, JobEvent, PlannerBrief } from '../types';
 import { GeminiSparkle } from './GeminiBrand';
 import { LiveTerminal } from './LiveTerminal';
 import { Panel, Pill } from './ui';
+
+function toOutputsHref(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  const norm = raw.replaceAll('\\', '/').trim();
+  if (norm.startsWith('/outputs/')) return norm;
+  if (norm.startsWith('outputs/')) return `/${norm}`;
+  const idx = norm.indexOf('/outputs/');
+  if (idx !== -1) return norm.slice(idx);
+  return null;
+}
 
 const kindColor: Record<JobEvent['kind'], string> = {
   status: 'text-gemini-sky',
@@ -81,6 +91,15 @@ export function PlannerPanel({
       ? final.data.stitched_video_url
       : null;
   const exitCode = typeof final?.data?.exit_code === 'number' ? final.data.exit_code : null;
+  const terminalNpzMatch = [...terminalLines]
+    .reverse()
+    .map((l) => l.text.match(/(\/?(?:[^\s'"]*\/)?outputs\/trajectories\/[^\s'"]+\.npz)/)?.[1])
+    .find(Boolean);
+  const finalTrajectoryHref =
+    toOutputsHref(final?.data?.trajectory_path) ??
+    toOutputsHref(final?.data?.trajectory_url) ??
+    toOutputsHref(final?.data?.exported_trajectory) ??
+    toOutputsHref(terminalNpzMatch);
 
   return (
     <Panel
@@ -132,7 +151,8 @@ export function PlannerPanel({
             </span>
             {brief.settings && (
               <span className="ml-auto font-mono text-[10px] text-faint">
-                mode={brief.settings.feedback_mode} · max={brief.settings.max_attempts} · seed={brief.settings.scene_seed}
+                mode={brief.settings.feedback_mode} · max={brief.settings.max_attempts} · thinking=
+                {brief.settings.thinking_level ?? 'high'} · seed={brief.settings.scene_seed}
                 {brief.settings.disabled_joints.length > 0 && ` · faults=${brief.settings.disabled_joints.join(',')}`}
               </span>
             )}
@@ -201,16 +221,25 @@ export function PlannerPanel({
           ) : (
             <CircleCheck className="mt-0.5 size-4 shrink-0" />
           )}
-          <span className="leading-relaxed">
-            {final.message}
+          <span className="flex flex-wrap items-center gap-2 leading-relaxed">
+            <span>{final.message}</span>
             {typeof final.data?.job_json === 'string' && (
               <a
                 href={final.data.job_json}
                 target="_blank"
                 rel="noreferrer"
-                className="ml-2 font-mono text-xs underline underline-offset-2"
+                className="font-mono text-xs underline underline-offset-2"
               >
                 job.json
+              </a>
+            )}
+            {finalTrajectoryHref && (
+              <a
+                href={finalTrajectoryHref}
+                download
+                className="inline-flex items-center gap-1 rounded-full border border-ok/40 bg-ok/15 px-2.5 py-0.5 font-mono text-xs font-medium text-ok transition hover:bg-ok/25"
+              >
+                <Download className="size-3" /> Download .npz
               </a>
             )}
           </span>
@@ -329,6 +358,23 @@ export function PlannerPanel({
                         {a.iteration.failure_mode}
                       </span>
                     )}
+                    {(() => {
+                      const iterRec = a.iteration as unknown as Record<string, unknown>;
+                      const attemptHref =
+                        toOutputsHref(a.data?.trajectory_path) ??
+                        toOutputsHref(iterRec?.trajectory_path) ??
+                        toOutputsHref(a.data?.waypoints_path) ??
+                        toOutputsHref(iterRec?.waypoints_path);
+                      return attemptHref ? (
+                        <a
+                          href={attemptHref}
+                          download
+                          className="inline-flex items-center gap-1 rounded bg-ok/15 px-1.5 py-px text-ok hover:underline"
+                        >
+                          <Download className="size-2.5" /> trajectory
+                        </a>
+                      ) : null;
+                    })()}
                   </div>
                 )}
 
